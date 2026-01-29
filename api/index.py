@@ -7,21 +7,20 @@ import tempfile
 import re
 from flask import Flask, request, render_template, redirect, url_for, send_file, flash, session
 from werkzeug.utils import secure_filename
-import io # Added for PMD process
-import logging # Added for PMD process
+import logging
 
 warnings.filterwarnings('ignore')
 
-# Configure logging for better error visibility
+# Configure logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # This would be 'your-vercel-project/api'
-template_dir = os.path.join(BASE_DIR, '..', 'templates') # This would point to 'your-vercel-project/templates'
-static_dir = os.path.join(BASE_DIR, '..', 'static')     # This would point to 'your-vercel-project/static'
+# Assuming 'index.py' is in 'api/' and 'templates'/'static' are at the project root
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+template_dir = os.path.join(BASE_DIR, '..', 'templates')
+static_dir = os.path.join(BASE_DIR, '..', 'static')
 
 app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
-
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a_strong_default_secret_key_for_local_dev_only_change_this_in_production')
 
 # --- Global Variables ---
@@ -34,7 +33,7 @@ CONSOLIDATED_OUTPUT_COLUMNS = [
 
 ALLOWED_EXTENSIONS = {'xls', 'xlsx'}
 
-# --- Helper Functions ---
+# --- Helper Functions (keep existing, add the new PMD one) ---
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -68,12 +67,15 @@ def clean_column_names(df):
     df.columns = new_columns
     return df
 
+# ... (Your existing consolidate_data_process, process_central_file_step2_update_existing,
+#      and process_central_file_step3_final_merge_and_needs_review functions here) ...
+
 def consolidate_data_process(df_pisa, df_esm, df_pm7, df_workon, df_rgpa, df_smd, consolidated_output_file_path):
     """
     Reads PISA, ESM, PM7, Workon, RGPA, and SMD Excel files (now passed as DFs), filters PISA & RGPA,
     consolidates data, and saves it to a new Excel file.
     """
-    logging.info("Starting data consolidation process for B-Segment...")
+    logging.info("Starting data consolidation process...")
     logging.info("All input DataFrames loaded successfully!")
 
     df_pisa = clean_column_names(df_pisa.copy())
@@ -295,7 +297,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7, df_workon, df_rgpa, df_smd
         logging.info(f"Consolidated file saved to: {consolidated_output_file_path}")
     except Exception as e:
         return False, f"Error saving consolidated file: {e}"
-    logging.info("--- Consolidated Data Process Complete for B-Segment ---")
+    logging.info("--- Consolidated Data Process Complete ---")
     return True, df_consolidated
 
 def process_central_file_step2_update_existing(consolidated_df, central_file_input_path):
@@ -303,7 +305,7 @@ def process_central_file_step2_update_existing(consolidated_df, central_file_inp
     Step 2: Updates status of *existing* central file records based on consolidated data.
     SMD records do NOT participate in this step as per requirements.
     """
-    logging.info(f"\n--- Starting Central File Status Processing (Step 2: Update Existing Barcodes) for B-Segment ---")
+    logging.info(f"\n--- Starting Central File Status Processing (Step 2: Update Existing Barcodes) ---")
 
     try:
         converters = {'Barcode': str, 'Vendor number': str, 'Company code': str}
@@ -391,7 +393,7 @@ def process_central_file_step2_update_existing(consolidated_df, central_file_inp
 
     except Exception as e:
         return False, f"Error processing central file (Step 2): {e}"
-    logging.info(f"--- Central File Status Processing (Step 2) Complete for B-Segment ---")
+    logging.info(f"--- Central File Status Processing (Step 2) Complete ---")
     return True, df_central_cleaned
 
 def process_central_file_step3_final_merge_and_needs_review(consolidated_df, updated_existing_central_df, final_central_output_file_path, df_pisa_original, df_esm_original, df_pm7_original, df_workon_original, df_rgpa_original, df_smd_original, region_mapping_df):
@@ -401,7 +403,7 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
             Also performs region mapping and final column reordering.
     SMD records will contribute to new additions, but not to 'Needs Review' for existing central records.
     """
-    logging.info(f"\n--- Starting Central File Status Processing (Step 3: Final Merge & Needs Review) for B-Segment ---")
+    logging.info(f"\n--- Starting Central File Status Processing (Step 3: Final Merge & Needs Review) ---")
 
     df_pisa_lookup = clean_column_names(df_pisa_original.copy())
     df_esm_lookup = clean_column_names(df_esm_original.copy())
@@ -711,22 +713,21 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
         logging.info(f"Total rows in final central file (after Step 3): {len(df_final_central)}")
     except Exception as e:
         return False, f"Error saving final central file (after Step 3): {e}"
-    logging.info(f"--- Central File Status Processing (Step 3) Complete for B-Segment ---")
+    logging.info(f"--- Central File Status Processing (Step 3) Complete ---")
     return True, "Central file processing (Step 3) successful"
 
 
-# --- B-Segment Allocation Processing Function ---
-def process_b_segment_allocation(request_files, temp_dir):
+# --- B-Segment Allocation Processing Function (now main processing function) ---
+def process_b_segment_allocation_core(request_files, temp_dir):
     """Encapsulates the B-Segment Allocation logic."""
     logging.info("Starting B-Segment Allocation Process...")
 
     REGION_MAPPING_FILE_PATH = os.path.join(BASE_DIR, 'company_code_region_mapping.xlsx') 
 
     uploaded_files = {}
-    required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgpa_file', 'b_segment_central_file'] # Renamed for clarity
-    optional_file_keys = ['workon_file', 'smd_file']
-
-    # Handle required files
+    
+    # --- Handle required files ---
+    required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgpa_file', 'central_file']
     for key in required_file_keys:
         file = request_files.get(key)
         if not file or file.filename == '':
@@ -736,11 +737,12 @@ def process_b_segment_allocation(request_files, temp_dir):
             file_path = os.path.join(temp_dir, filename)
             file.save(file_path)
             uploaded_files[key] = file_path
-            flash(f'File "{filename}" uploaded successfully for B-Segment.', 'info')
+            flash(f'File "{filename}" uploaded successfully.', 'info')
         else:
             return False, f'Invalid file type for "{key}". Please upload an .xlsx file.', None
     
-    # Handle optional files
+    # --- Handle optional files ---
+    optional_file_keys = ['workon_file', 'smd_file']
     for key in optional_file_keys:
         file = request_files.get(key)
         if file and file.filename != '': 
@@ -749,12 +751,12 @@ def process_b_segment_allocation(request_files, temp_dir):
                 file_path = os.path.join(temp_dir, filename)
                 file.save(file_path)
                 uploaded_files[key] = file_path
-                flash(f'Optional file "{filename}" uploaded successfully for B-Segment.', 'info')
+                flash(f'Optional file "{filename}" uploaded successfully.', 'info')
             else:
                 flash(f'Invalid file type for optional file "{key}". It must be an .xlsx file.', 'warning')
                 uploaded_files[key] = None 
         else:
-            logging.info(f'Optional file "{key}" not provided for B-Segment. Continuing without it.')
+            logging.info(f'Optional file "{key}" not provided. Continuing without it.')
             uploaded_files[key] = None 
 
     pisa_file_path = uploaded_files['pisa_file']
@@ -763,7 +765,7 @@ def process_b_segment_allocation(request_files, temp_dir):
     workon_file_path = uploaded_files['workon_file'] 
     rgpa_file_path = uploaded_files['rgpa_file']
     smd_file_path = uploaded_files['smd_file']
-    initial_central_file_input_path = uploaded_files['b_segment_central_file']
+    initial_central_file_input_path = uploaded_files['central_file'] # Original name
 
     df_pisa_original = None
     df_esm_original = None
@@ -794,159 +796,225 @@ def process_b_segment_allocation(request_files, temp_dir):
             logging.info(f"Successfully loaded region mapping file from: {REGION_MAPPING_FILE_PATH}")
         else:
             flash(f"Warning: Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty for records relying solely on this mapping.", 'warning')
-    
+        
     except Exception as e:
-        return False, f"Error loading one or more input Excel files for B-Segment: {e}. Please ensure all files are valid .xlsx formats.", None
+        return False, f"Error loading one or more input Excel files: {e}. Please ensure all files are valid .xlsx formats.", None
 
     today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
 
     # --- Step 1: Consolidate Data ---
-    consolidated_output_filename = f'ConsolidatedData_B_Segment_{today_str}.xlsx'
+    consolidated_output_filename = f'ConsolidatedData_{today_str}.xlsx'
     consolidated_output_file_path = os.path.join(temp_dir, consolidated_output_filename)
     success, result = consolidate_data_process(
         df_pisa_original, df_esm_original, df_pm7_original, df_workon_original, df_rgpa_original, df_smd_original, consolidated_output_file_path 
     )
 
     if not success:
-        return False, f'B-Segment Consolidation Error: {result}', None
+        return False, f'Consolidation Error: {result}', None
     df_consolidated = result
-    flash('Data consolidation for B-Segment completed successfully!', 'success')
-    session['b_segment_consolidated_output_path'] = consolidated_output_file_path
+    flash('Data consolidation from the sources completed successfully!', 'success')
+    session['consolidated_output_path'] = consolidated_output_file_path
 
     # --- Step 2: Update existing central file records based on consolidation ---
     success, result_df = process_central_file_step2_update_existing(
         df_consolidated, initial_central_file_input_path
     )
     if not success:
-        return False, f'B-Segment Central File Processing (Step 2) Error: {result_df}', None
+        return False, f'Central File Processing (Step 2) Error: {result_df}', None
     df_central_updated_existing = result_df
 
     # --- Step 3: Final Merge (Add new barcodes, mark 'Needs Review', and apply Region Mapping) ---
-    final_central_output_filename = f'CentralFile_B_Segment_FinalOutput_{today_str}.xlsx'
+    final_central_output_filename = f'CentralFile_FinalOutput_{today_str}.xlsx'
     final_central_output_file_path = os.path.join(temp_dir, final_central_output_filename)
     success, message = process_central_file_step3_final_merge_and_needs_review(
         df_consolidated, df_central_updated_existing, final_central_output_file_path,
         df_pisa_original, df_esm_original, df_pm7_original, df_workon_original, df_rgpa_original, df_smd_original, df_region_mapping 
     )
     if not success:
-        return False, f'B-Segment Central File Processing (Step 3) Error: {message}', None
-    flash('B-Segment central file finalized successfully!', 'success')
-    session['b_segment_central_output_path'] = final_central_output_file_path
-    return True, 'B-Segment processing complete', final_central_output_file_path
+        return False, f'Central File Processing (Step 3) Error: {message}', None
+    flash('Central file finalized successfully!', 'success')
+    session['central_output_path'] = final_central_output_file_path
+    return True, 'Processing complete', final_central_output_file_path
 
-# --- PMD Lookup Processing Function ---
-def process_pmd_lookup(request_files, temp_dir):
+
+def process_pmd_lookup_core(request_files, temp_dir):
     """Encapsulates the PMD Lookup logic."""
     logging.info("Starting PMD Lookup Process...")
 
-    # -------------------- FILE VALIDATION --------------------
-    pmd_central_file = request_files.get('pmd_central_file') # Renamed for clarity
-    pmd_lookup_file = request_files.get('pmd_lookup_file')
+    uploaded_files = {}
+    
+    # Handle required PMD files
+    required_pmd_file_keys = ['pmd_central_file', 'pmd_lookup_file']
+    for key in required_pmd_file_keys:
+        file = request_files.get(key)
+        if not file or file.filename == '':
+            return False, f'Missing required PMD file: "{key}". Please upload both PMD files.', None
+        if allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(temp_dir, filename)
+            file.save(file_path)
+            uploaded_files[key] = file_path
+            flash(f'PMD file "{filename}" uploaded successfully.', 'info')
+        else:
+            return False, f'Invalid file type for PMD file "{key}". Please upload an .xlsx file.', None
 
-    if not pmd_central_file or pmd_central_file.filename == '' or \
-       not pmd_lookup_file or pmd_lookup_file.filename == '':
-        return False, 'Both PMD Central File and PMD Dump File are required.', None
-
-    if not (allowed_file(pmd_central_file.filename) and allowed_file(pmd_lookup_file.filename)):
-        return False, 'Only Excel files (.xls, .xlsx) are allowed for PMD processing.', None
+    pmd_central_file_path = uploaded_files['pmd_central_file']
+    pmd_lookup_file_path = uploaded_files['pmd_lookup_file']
 
     try:
-        # -------------------- READ FILES --------------------
-        central_df = pd.read_excel(io.BytesIO(pmd_central_file.read()))
-        pmd_df = pd.read_excel(io.BytesIO(pmd_lookup_file.read()))
-
-        # -------------------- REQUIRED COLUMNS --------------------
-        central_required = ['Valid From', 'Supplier Name', 'Status', 'Assigned']
-        pmd_required = ['Valid From', 'Supplier Name']
-
-        for col in central_required:
-            if col not in central_df.columns:
-                raise KeyError(f"PMD Central file missing column: {col}")
-
-        for col in pmd_required:
-            if col not in pmd_df.columns:
-                raise KeyError(f"PMD Dump file missing column: {col}")
-
-        # -------------------- DATE NORMALIZATION --------------------
-        central_df['Valid From_dt'] = pd.to_datetime(central_df['Valid From'], errors='coerce')
-        pmd_df['Valid From_dt'] = pd.to_datetime(pmd_df['Valid From'], errors='coerce')
-
-        central_df.dropna(subset=['Valid From_dt', 'Supplier Name'], inplace=True)
-        pmd_df.dropna(subset=['Valid From_dt', 'Supplier Name'], inplace=True)
-
-        # -------------------- CREATE MATCH KEY --------------------
-        central_df['comp_key'] = (
-            central_df['Valid From_dt'].dt.strftime('%Y-%m-%d') + '__' +
-            central_df['Supplier Name'].astype(str).str.strip()
-        )
-
-        pmd_df['comp_key'] = (
-            pmd_df['Valid From_dt'].dt.strftime('%Y-%m-%d') + '__' +
-            pmd_df['Supplier Name'].astype(str).str.strip()
-        )
-
-        # -------------------- CENTRAL LOOKUP (NO JOIN) --------------------
-        central_lookup = central_df.set_index('comp_key')[['Status', 'Assigned']]
-
-        # -------------------- BUSINESS LOGIC --------------------
-        def determine_status(row):
-            # No match → New
-            if row['comp_key'] not in central_lookup.index:
-                return 'New', None
-
-            central_status = central_lookup.loc[row['comp_key'], 'Status']
-            central_assigned = central_lookup.loc[row['comp_key'], 'Assigned']
-
-            # Match + Approved → Ignore
-            if isinstance(central_status, str) and central_status.lower() == 'approved':
-                return None, None
-
-            # Match + Not Approved → Hold
-            return 'Hold', central_assigned
-
-        pmd_df[['Status', 'Assigned']] = pmd_df.apply(
-            lambda r: determine_status(r),
-            axis=1,
-            result_type='expand'
-        )
-
-        # Remove ignored rows (where status became None due to being Approved)
-        final_df = pmd_df[pmd_df['Status'].notna()].copy()
-
-        # -------------------- FORMAT & OUTPUT --------------------
-        final_df['Valid From'] = final_df['Valid From_dt'].dt.strftime('%Y-%m-%d %I:%M %p')
-
-        output_columns = [
-            'Valid From', 'Bukr.', 'Type', 'EBSNO', 'Supplier Name', 'Street',
-            'City', 'Country', 'Zip Code', 'Requested By', 'Pur. approver',
-            'Pur. release date', 'Status', 'Assigned'
-        ]
-
-        # Select columns, ensuring they exist in final_df
-        final_df = final_df[[col for col in output_columns if col in final_df.columns]]
-
-        # -------------------- CREATE EXCEL --------------------
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            final_df.to_excel(writer, index=False, sheet_name='PMD Result')
-
-        output.seek(0)
+        # Load and clean PMD Central File
+        df_central_pmd_original = pd.read_excel(pmd_central_file_path, keep_default_na=False)
+        df_central_pmd = clean_column_names(df_central_pmd_original.copy())
         
-        today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
-        output_filename = f'PMD_Lookup_Result_{today_str}.xlsx'
-        output_file_path = os.path.join(temp_dir, output_filename)
-        
-        # Save to temp file for consistent download handling
-        with open(output_file_path, 'wb') as f:
-            f.write(output.getvalue())
+        # Load and clean PMD Dump File
+        df_pmd_dump_original = pd.read_excel(pmd_lookup_file_path, keep_default_na=False)
+        df_pmd_dump = clean_column_names(df_pmd_dump_original.copy())
 
-        flash('PMD Lookup processed successfully!', 'success')
-        session['pmd_lookup_output_path'] = output_file_path
-        return True, 'PMD Lookup processing complete', output_file_path
+        logging.info("PMD Central and PMD Dump files loaded and cleaned.")
 
     except Exception as e:
-        logging.error(f"Error during PMD Lookup processing: {e}", exc_info=True)
-        return False, f"PMD Lookup Error: {e}", None
+        return False, f"Error loading one or both PMD Excel files: {e}. Please ensure they are valid .xlsx formats.", None
+
+    # --- Validate essential columns for PMD Lookup ---
+    required_central_cols = ['valid_from', 'supplier_name', 'status', 'assigned']
+    for col in required_central_cols:
+        if col not in df_central_pmd.columns:
+            return False, f"Missing required column '{col}' in PMD Central file after cleaning. Please check rules.", None
+
+    required_dump_cols = ['valid_from', 'supplier_name']
+    for col in required_dump_cols:
+        if col not in df_pmd_dump.columns:
+            return False, f"Missing required column '{col}' in PMD Dump file after cleaning. Please check rules.", None
+
+    # --- Pre-processing for lookup keys ---
+    # Standardize 'Valid From' dates to a comparable format (e.g., YYYY-MM-DD string)
+    df_central_pmd['valid_from_key'] = pd.to_datetime(df_central_pmd['valid_from'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
+    df_pmd_dump['valid_from_key'] = pd.to_datetime(df_pmd_dump['valid_from'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
+
+    df_central_pmd['supplier_name_key'] = df_central_pmd['supplier_name'].astype(str).str.strip().str.lower()
+    df_pmd_dump['supplier_name_key'] = df_pmd_dump['supplier_name'].astype(str).str.strip().str.lower()
+
+    # Create composite key for central file and set as index for efficient lookup
+    df_central_pmd['comp_key'] = df_central_pmd['valid_from_key'] + '__' + df_central_pmd['supplier_name_key']
+    central_lookup = df_central_pmd.set_index('comp_key')
+
+    # Create composite key for dump file
+    df_pmd_dump['comp_key'] = df_pmd_dump['valid_from_key'] + '__' + df_pmd_dump['supplier_name_key']
+
+    logging.info("Composite keys created and central file indexed for lookup.")
+
+    # --- Apply the provided logic ---
+    def determine_status(row):
+        # Access cleaned column names
+        dump_comp_key = row['comp_key']
+
+        # No match → New
+        if dump_comp_key not in central_lookup.index:
+            return 'New', None  # 'Assigned' remains None for new records
+
+        central_record = central_lookup.loc[dump_comp_key]
+        central_status = central_record['status'] # Use cleaned column name
+        central_assigned = central_record['assigned'] # Use cleaned column name
+
+        # Match + Approved → Ignore (return None for both status and assigned)
+        if isinstance(central_status, str) and central_status.strip().lower() == 'approved':
+            return None, None
+
+        # Match + Not Approved → Hold
+        return 'Hold', central_assigned
+
+    # Apply the status determination
+    df_pmd_dump[['status_result', 'assigned_result']] = df_pmd_dump.apply(
+        lambda r: determine_status(r),
+        axis=1,
+        result_type='expand'
+    )
+    logging.info("Status and Assigned results determined for PMD Dump records.")
+
+    # Remove ignored rows (where status_result is None)
+    final_output_df = df_pmd_dump[df_pmd_dump['status_result'].notna()].copy()
+
+    # Update 'Status' and 'Assigned' columns in the final output DataFrame
+    final_output_df['Status'] = final_output_df['status_result']
+    final_output_df['Assigned'] = final_output_df['assigned_result']
+
+    # Drop temporary/helper columns
+    final_output_df = final_output_df.drop(columns=['valid_from_key', 'supplier_name_key', 'comp_key', 'status_result', 'assigned_result'])
+    
+    # Re-apply original column names for output, keeping the newly generated Status/Assigned
+    # Map cleaned names back to original if needed, or simply output with cleaned names.
+    # For now, let's assume we want to output with cleaned names, and then specifically
+    # rename 'status' and 'assigned' to their title-case versions as required by the UI rule.
+    
+    # Get original columns from the *dump* file which are to be included, plus the new Status and Assigned
+    # The rule specifies: Valid From, Supplier Name, and optionally other columns.
+    # So we'll try to reconstruct based on original dump columns + new status/assigned.
+    output_columns = [
+        col for col in df_pmd_dump_original.columns if clean_column_names(pd.DataFrame(columns=[col])).columns[0] in final_output_df.columns
+    ]
+    # Add new Status and Assigned, ensuring they are at the end if not explicitly in output_columns
+    if 'Status' not in output_columns:
+        output_columns.append('Status')
+    if 'Assigned' not in output_columns:
+        output_columns.append('Assigned')
+
+    # Rename cleaned columns in final_output_df to match original expectations for Status/Assigned if needed.
+    # The problem statement in HTML expects 'Status' and 'Assigned' (capitalized).
+    # Since we explicitly created 'Status' and 'Assigned' above, this should be fine.
+    # For other columns, if `clean_column_names` modifies them, we might need to map them back.
+    # A simpler approach for output is to use the cleaned column names and just ensure Status/Assigned are there.
+    
+    # Let's decide on the final output columns explicitly based on the rule:
+    # "Valid From", "Supplier Name", optionally other columns, and the new "Status", "Assigned".
+    
+    # Get all columns from the original PMD Dump file, and rename them to their cleaned versions to match final_output_df
+    original_dump_cols_cleaned = {
+        col: clean_column_names(pd.DataFrame(columns=[col])).columns[0]
+        for col in df_pmd_dump_original.columns
+    }
+    
+    # Select the relevant columns from final_output_df, using the original column names as reference
+    final_cols_to_keep = []
+    # Preserve original order and capitalization of common columns
+    for original_col in df_pmd_dump_original.columns:
+        cleaned_col = clean_column_names(pd.DataFrame(columns=[original_col])).columns[0]
+        if cleaned_col in final_output_df.columns:
+            final_cols_to_keep.append(cleaned_col)
+            # Rename back to original if they are not 'status' or 'assigned' which we handled specifically
+            # This is to ensure output matches expected original headers + new Status/Assigned
+            final_output_df.rename(columns={cleaned_col: original_col}, inplace=True)
+
+    # Ensure 'Status' and 'Assigned' are present and in final list (they were added already with correct capitalization)
+    if 'Status' not in final_cols_to_keep:
+        final_cols_to_keep.append('Status')
+    if 'Assigned' not in final_cols_to_keep:
+        final_cols_to_keep.append('Assigned')
+
+    final_output_df = final_output_df[final_cols_to_keep]
+
+    # Format 'Valid From' back to MM/DD/YYYY if it's a date column
+    # We should detect the original column name for 'valid_from' to do this
+    original_valid_from_col_name = None
+    for original_col in df_pmd_dump_original.columns:
+        if clean_column_names(pd.DataFrame(columns=[original_col])).columns[0] == 'valid_from':
+            original_valid_from_col_name = original_col
+            break
+
+    if original_valid_from_col_name and original_valid_from_col_name in final_output_df.columns:
+        final_output_df[original_valid_from_col_name] = format_date_to_mdyyyy(final_output_df[original_valid_from_col_name])
+
+    today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
+    pmd_output_filename = f'PMD_Lookup_Result_{today_str}.xlsx'
+    pmd_output_file_path = os.path.join(temp_dir, pmd_output_filename)
+
+    try:
+        final_output_df.to_excel(pmd_output_file_path, index=False)
+        logging.info(f"PMD Lookup result saved to: {pmd_output_file_path}")
+    except Exception as e:
+        return False, f"Error saving PMD Lookup result file: {e}", None
+    
+    logging.info("--- PMD Lookup Process Complete ---")
+    return True, 'PMD Lookup processing successful', pmd_output_file_path
 
 
 # --- Flask Routes ---
@@ -954,8 +1022,9 @@ def process_pmd_lookup(request_files, temp_dir):
 @app.route('/', methods=['GET'])
 def index():
     # Clear session download paths when returning to index to avoid stale links
-    session.pop('b_segment_central_output_path', None)
-    session.pop('pmd_lookup_output_path', None)
+    session.pop('consolidated_output_path', None)
+    session.pop('central_output_path', None)
+    session.pop('pmd_lookup_output_path', None) # Add for PMD lookup
     
     # Ensure any residual temp_dir is cleaned up when starting fresh
     temp_dir = session.get('temp_dir')
@@ -969,34 +1038,35 @@ def index():
 
     return render_template('index.html')
 
-@app.route('/process_b_segment_allocation', methods=['POST'])
+@app.route('/process_b_segment_allocation', methods=['POST']) # Specific route for B-Segment
 def route_process_b_segment_allocation():
     temp_dir = None
     try:
         temp_dir = tempfile.mkdtemp(dir=tempfile.gettempdir())
         session['temp_dir'] = temp_dir # Store temp_dir in session
 
-        session.pop('b_segment_consolidated_output_path', None)
-        session.pop('b_segment_central_output_path', None)
+        session.pop('consolidated_output_path', None)
+        session.pop('central_output_path', None)
+        # We don't clear pmd_lookup_output_path here as it's a separate process
 
-        success, message, output_path = process_b_segment_allocation(request.files, temp_dir)
+        success, message, output_path = process_b_segment_allocation_core(request.files, temp_dir)
 
         if not success:
             flash(message, 'error')
             return redirect(url_for('index'))
         
         return render_template('index.html',
-                               b_segment_download_link=url_for('download_file', filename=os.path.basename(output_path), process_type='b_segment'))
+                               b_segment_download_link=url_for('download_file', filename=os.path.basename(output_path)))
 
     except Exception as e:
-        flash(f'An unhandled error occurred during B-Segment Allocation: {e}', 'error')
+        flash(f'An unhandled error occurred during B-Segment processing: {e}', 'error')
         logging.error(f'Unhandled error in /process_b_segment_allocation: {e}', exc_info=True)
         return redirect(url_for('index'))
     finally:
         # Keep temp_dir for download, cleanup on /download or /cleanup_session
         pass
 
-@app.route('/process_pmd_lookup', methods=['POST'])
+@app.route('/process_pmd_lookup', methods=['POST']) # New route for PMD Lookup
 def route_process_pmd_lookup():
     temp_dir = None
     try:
@@ -1004,30 +1074,33 @@ def route_process_pmd_lookup():
         session['temp_dir'] = temp_dir # Store temp_dir in session
 
         session.pop('pmd_lookup_output_path', None)
+        # We don't clear b_segment related paths here as it's a separate process
 
-        success, message, output_path = process_pmd_lookup(request.files, temp_dir)
+        success, message, output_path = process_pmd_lookup_core(request.files, temp_dir)
 
         if not success:
             flash(message, 'error')
             return redirect(url_for('index'))
         
+        session['pmd_lookup_output_path'] = output_path # Store for download
         return render_template('index.html',
-                               pmd_lookup_download_link=url_for('download_file', filename=os.path.basename(output_path), process_type='pmd_lookup'))
+                               pmd_lookup_download_link=url_for('download_file', filename=os.path.basename(output_path)))
 
     except Exception as e:
-        flash(f'An unhandled error occurred during PMD Lookup: {e}', 'error')
+        flash(f'An unhandled error occurred during PMD Lookup processing: {e}', 'error')
         logging.error(f'Unhandled error in /process_pmd_lookup: {e}', exc_info=True)
         return redirect(url_for('index'))
     finally:
         # Keep temp_dir for download, cleanup on /download or /cleanup_session
         pass
 
-@app.route('/download/<process_type>/<filename>', methods=['GET']) # Modified to include process_type
-def download_file(process_type, filename):
+
+@app.route('/download/<filename>', methods=['GET'])
+def download_file(filename):
     file_path_in_temp = None
     temp_dir = session.get('temp_dir')
 
-    logging.info(f"DEBUG: Download requested for filename: {filename} for process: {process_type}")
+    logging.info(f"DEBUG: Download requested for filename: {filename}")
     logging.info(f"DEBUG: Session temp_dir: {temp_dir}")
     
     if not temp_dir:
@@ -1035,20 +1108,18 @@ def download_file(process_type, filename):
         flash('File not found for download or session expired. Please re-run the process.', 'error')
         return redirect(url_for('index'))
 
-    if process_type == 'b_segment':
-        session_path = session.get('b_segment_central_output_path')
-    elif process_type == 'pmd_lookup':
-        session_path = session.get('pmd_lookup_output_path')
-    else:
-        logging.error(f"DEBUG: Unknown process_type '{process_type}' for download.")
-        flash('Invalid download request.', 'error')
-        return redirect(url_for('index'))
+    # Check against the specific download paths for B-Segment and PMD Lookup
+    b_segment_session_path = session.get('central_output_path')
+    pmd_lookup_session_path = session.get('pmd_lookup_output_path')
 
-    if session_path and os.path.basename(session_path) == filename:
+    if b_segment_session_path and os.path.basename(b_segment_session_path) == filename:
         file_path_in_temp = os.path.join(temp_dir, filename)
-        logging.info(f"DEBUG: Matched {process_type} file. Reconstructed path: {file_path_in_temp}")
+        logging.info(f"DEBUG: Matched B-Segment central file. Reconstructed path: {file_path_in_temp}")
+    elif pmd_lookup_session_path and os.path.basename(pmd_lookup_session_path) == filename:
+        file_path_in_temp = os.path.join(temp_dir, filename)
+        logging.info(f"DEBUG: Matched PMD Lookup result file. Reconstructed path: {file_path_in_temp}")
     else:
-        logging.error(f"DEBUG: Filename '{filename}' did not match any known session output files for {process_type}.")
+        logging.error(f"DEBUG: Filename '{filename}' did not match any known session output files.")
 
     if file_path_in_temp and os.path.exists(file_path_in_temp):
         logging.info(f"DEBUG: File '{file_path_in_temp}' exists. Attempting to send.")
@@ -1059,9 +1130,6 @@ def download_file(process_type, filename):
                 as_attachment=True,
                 download_name=filename
             )
-            # After successful download, remove the file and clean up the temp directory if only one process
-            # For simplicity now, cleanup happens via /cleanup_session or when temp_dir is reused.
-            # A more robust solution might track which files belong to which process in the temp_dir.
             return response
         except Exception as e:
             logging.error(f"ERROR: Exception while sending file '{file_path_in_temp}': {e}", exc_info=True)
@@ -1084,9 +1152,9 @@ def cleanup_session():
             logging.error(f"ERROR: Error removing temporary directory {temp_dir}: {e}")
             flash(f'Error cleaning up temporary files: {e}', 'error')
     session.pop('temp_dir', None)
-    session.pop('b_segment_consolidated_output_path', None)
-    session.pop('b_segment_central_output_path', None)
-    session.pop('pmd_lookup_output_path', None)
+    session.pop('consolidated_output_path', None)
+    session.pop('central_output_path', None)
+    session.pop('pmd_lookup_output_path', None) # Clear PMD lookup path as well
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
