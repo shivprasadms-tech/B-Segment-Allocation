@@ -180,6 +180,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
     df_consolidated = df_consolidated[CONSOLIDATED_OUTPUT_COLUMNS]
 
     # Convert known date columns to datetime objects for consistency
+    # This step is crucial for the Aging calculation later
     date_cols_to_process = ['Received Date', 'Re-Open Date', 'Allocation Date', 'Completion Date', 'Clarification Date', 'Today']
     for col in date_cols_to_process:
         if col in df_consolidated.columns:
@@ -211,7 +212,7 @@ def process_central_file_step2_update_existing(consolidated_df_pisa_esm_pm7, cen
             df_central_cleaned['barcode'] = df_central_cleaned['barcode'].astype(str).replace('nan', '')
         else:
             return False, "Error: 'barcode' column not found in the central file after cleaning. Cannot update status (Step 2)."
-        
+
         # Ensure 'status' column exists for subsequent logic
         if 'status' not in df_central_cleaned.columns:
             df_central_cleaned['status'] = '' # Add empty status if missing
@@ -229,7 +230,7 @@ def process_central_file_step2_update_existing(consolidated_df_pisa_esm_pm7, cen
     consolidated_barcodes_for_status_change_set = set()
     if not consolidated_df_pisa_esm_pm7.empty:
         consolidated_barcodes_for_status_change_set = set(consolidated_df_pisa_esm_pm7['Barcode'].unique())
-    
+
     logging.info(f"Found {len(consolidated_barcodes_for_status_change_set)} unique barcodes from PISA/ESM/PM7 in consolidated file for Step 2 status updates.")
 
     # Apply the status transformation only for central records whose barcodes exist in the consolidated set
@@ -567,8 +568,34 @@ def process_central_file_step3_final_merge_and_needs_review(
                 df_final_central['Region'] = df_final_central['Region'].fillna('')
     logging.debug(f"DEBUG (Step 3): Status distribution after Region Mapping logic:\n{df_final_central['Status'].value_counts(dropna=False)}")
 
+    # --- 8. Calculate 'Aging' ---
+    logging.info("\n--- Calculating 'Aging' column ---")
+    if 'Today' in df_final_central.columns and 'Allocation Date' in df_final_central.columns:
+        # Ensure 'Today' and 'Allocation Date' are in datetime format for calculation
+        df_final_central['Today_dt'] = pd.to_datetime(df_final_central['Today'], errors='coerce')
+        df_final_central['Allocation Date_dt'] = pd.to_datetime(df_final_central['Allocation Date'], errors='coerce')
 
-    # --- 8. Final formatting and save ---
+        # Calculate difference and extract days
+        # Use .dt.days for timedelta objects, handle NaT results from errors='coerce'
+        df_final_central['Aging'] = (df_final_central['Today_dt'] - df_final_central['Allocation Date_dt']).dt.days
+
+        # Replace NaN in 'Aging' with empty string or 0 as per requirement
+        # For 'Aging', 0 might be more appropriate than empty string for numerical column
+        df_final_central['Aging'] = df_final_central['Aging'].fillna('').astype(str).replace('nan', '') # Convert to string to match other empty values
+        # If you prefer 0 for missing dates:
+        # df_final_central['Aging'] = df_final_central['Aging'].fillna(0).astype(int)
+
+        # Drop the temporary datetime columns
+        df_final_central = df_final_central.drop(columns=['Today_dt', 'Allocation Date_dt'])
+        logging.info("'Aging' column calculated successfully.")
+    else:
+        logging.warning("Warning: 'Today' or 'Allocation Date' columns missing. Cannot calculate 'Aging'.")
+        if 'Aging' not in df_final_central.columns:
+            df_final_central['Aging'] = ''
+        df_final_central['Aging'] = df_final_central['Aging'].fillna('')
+
+
+    # --- 9. Final formatting and save ---
     # Apply date formatting as MM/DD/YYYY at the very end
     date_cols_in_central_file = [
         'Received Date', 'Re-Open Date', 'Allocation Date',
@@ -591,7 +618,7 @@ def process_central_file_step3_final_merge_and_needs_review(
     # Reorder columns to ensure final output matches specification
     df_final_central = df_final_central[CONSOLIDATED_OUTPUT_COLUMNS]
     logging.debug(f"DEBUG: Final Status column before saving:\n{df_final_central['Status'].value_counts(dropna=False)}")
-    logging.debug(f"DEBUG: Final sample rows before saving:\n{df_final_central[['Barcode', 'Channel', 'Status']].head(10)}")
+    logging.debug(f"DEBUG: Final sample rows before saving:\n{df_final_central[['Barcode', 'Channel', 'Status', 'Today', 'Allocation Date', 'Aging']].head(10)}")
 
 
     try:
