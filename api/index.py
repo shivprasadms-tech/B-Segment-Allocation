@@ -43,6 +43,7 @@ def format_date_to_mdyyyy(date_series):
     """
     Formats a pandas Series of dates to MM/DD/YYYY string format.
     Handles potential mixed types and NaT values.
+    (This function is not used for PMD 'Valid From' now, but kept for B-Segment)
     """
     datetime_series = pd.to_datetime(date_series, errors='coerce')
     formatted_series = datetime_series.apply(
@@ -776,15 +777,13 @@ def process_b_segment_allocation_core(request_files, temp_dir):
 # (This should also come BEFORE any routes that might call it)
 def process_pmd_lookup_core(request_files, temp_dir):
     """
-    Encapsulates the PMD Lookup logic, modified to align with the provided second snippet.
-    This includes the 'New', 'Hold', and 'Ignore (Approved)' status determination.
-    Enhanced with debugging to identify "all New" status issue.
+    Encapsulates the PMD Lookup logic.
+    MODIFICATION: 'Valid From' column is now used as raw string, not converted to datetime object.
     """
-    logging.info("Starting PMD Lookup Process (revised logic with debugging)...")
+    logging.info("Starting PMD Lookup Process (revised logic, raw 'Valid From')...")
 
     uploaded_files = {}
 
-    # Handle required PMD files
     required_pmd_file_keys = ['pmd_central_file', 'pmd_lookup_file']
     for key in required_pmd_file_keys:
         file = request_files.get(key)
@@ -803,8 +802,10 @@ def process_pmd_lookup_core(request_files, temp_dir):
     pmd_lookup_file_path = uploaded_files['pmd_lookup_file']
 
     try:
-        df_central_pmd_original = pd.read_excel(pmd_central_file_path, keep_default_na=False)
-        df_pmd_dump_original = pd.read_excel(pmd_lookup_file_path, keep_default_na=False)
+        # Load with keep_default_na=False to treat empty cells as empty strings, not NaN
+        # Also ensure 'Valid From' is read as object/string
+        df_central_pmd_original = pd.read_excel(pmd_central_file_path, keep_default_na=False, dtype={'Valid From': str})
+        df_pmd_dump_original = pd.read_excel(pmd_lookup_file_path, keep_default_na=False, dtype={'Valid From': str})
         logging.info("PMD Central and PMD Dump files loaded.")
 
     except Exception as e:
@@ -848,37 +849,38 @@ def process_pmd_lookup_core(request_files, temp_dir):
     cleaned_valid_from_dump = original_to_cleaned_dump['Valid From']
     cleaned_supplier_name_dump = original_to_cleaned_dump['Supplier Name']
 
-    # Standardize 'Valid From' dates to a comparable format (YYYY-MM-DD string)
-    # pd.to_datetime needs to handle various input formats gracefully
-    df_central_pmd['valid_from_dt'] = pd.to_datetime(df_central_pmd[cleaned_valid_from_central], errors='coerce')
-    df_pmd_dump['valid_from_dt'] = pd.to_datetime(df_pmd_dump[cleaned_valid_from_dump], errors='coerce')
-
-    # Drop rows where essential lookup components are missing after date conversion
-    df_central_pmd.dropna(subset=['valid_from_dt', cleaned_supplier_name_central], inplace=True)
-    df_pmd_dump.dropna(subset=['valid_from_dt', cleaned_supplier_name_dump], inplace=True)
-    logging.info(f"After date conversion and NaN drop: Central PMD rows: {len(df_central_pmd)}, PMD Dump rows: {len(df_pmd_dump)}")
+    # --- MODIFICATION START ---
+    # No datetime conversion for 'Valid From'
+    # Ensure 'Valid From' and 'Supplier Name' are treated as strings for key creation
+    df_central_pmd[cleaned_valid_from_central] = df_central_pmd[cleaned_valid_from_central].astype(str).str.strip()
+    df_pmd_dump[cleaned_valid_from_dump] = df_pmd_dump[cleaned_valid_from_dump].astype(str).str.strip()
+    
+    # Drop rows where essential lookup components are missing/empty AFTER converting to string
+    df_central_pmd.dropna(subset=[cleaned_valid_from_central, cleaned_supplier_name_central], inplace=True)
+    df_pmd_dump.dropna(subset=[cleaned_valid_from_dump, cleaned_supplier_name_dump], inplace=True)
+    logging.info(f"After string conversion and NaN drop: Central PMD rows: {len(df_central_pmd)}, PMD Dump rows: {len(df_pmd_dump)}")
 
     # Create composite key for both dataframes, ensuring consistency
+    # Using raw 'Valid From' string for the key
     df_central_pmd['comp_key'] = (
-        df_central_pmd['valid_from_dt'].dt.strftime('%Y-%m-%d') + '__' +
+        df_central_pmd[cleaned_valid_from_central] + '__' +
         df_central_pmd[cleaned_supplier_name_central].astype(str).str.strip().str.lower()
     )
     df_pmd_dump['comp_key'] = (
-        df_pmd_dump['valid_from_dt'].dt.strftime('%Y-%m-%d') + '__' +
+        df_pmd_dump[cleaned_valid_from_dump] + '__' +
         df_pmd_dump[cleaned_supplier_name_dump].astype(str).str.strip().str.lower()
     )
-    logging.info("Composite keys created for both DataFrames.")
+    # --- MODIFICATION END ---
+    
+    logging.info("Composite keys created for both DataFrames (using raw 'Valid From' string).")
 
     # --- Central Lookup (no join, use set_index for efficiency) ---
-    # Select only the relevant columns for lookup from central and set comp_key as index
-    # Ensure status and assigned columns are handled as strings for reliable comparison/retrieval
     central_lookup_data = df_central_pmd[[
         'comp_key',
         cleaned_status_central,
         cleaned_assigned_central
     ]].copy()
 
-    # Convert status and assigned to string types to prevent errors during lookup
     central_lookup_data[cleaned_status_central] = central_lookup_data[cleaned_status_central].astype(str).str.strip()
     central_lookup_data[cleaned_assigned_central] = central_lookup_data[cleaned_assigned_central].astype(str).str.strip()
 
@@ -916,7 +918,6 @@ def process_pmd_lookup_core(request_files, temp_dir):
         logging.debug(f"Central status is not 'approved'. Status: Hold.")
         return 'Hold', central_assigned
 
-    # Apply the status determination
     df_pmd_dump[['status_output', 'assigned_output']] = df_pmd_dump.apply(
         lambda r: determine_status_and_assigned(r),
         axis=1,
@@ -924,7 +925,6 @@ def process_pmd_lookup_core(request_files, temp_dir):
     )
     logging.info("Status and Assigned results determined for PMD Dump records.")
 
-    # Log distribution of generated statuses before filtering
     logging.debug(f"Generated PMD Dump Statuses before filtering (counts):\n{df_pmd_dump['status_output'].value_counts(dropna=False)}")
 
     # Remove ignored rows (where status_output is None)
@@ -933,10 +933,6 @@ def process_pmd_lookup_core(request_files, temp_dir):
 
     # --- Prepare final output DataFrame ---
 
-    # Get the original column names for the output
-    # First, list all columns from the original pmd_dump_original, plus the new Status and Assigned
-    all_original_dump_cols = df_pmd_dump_original.columns.tolist()
-    
     # These are the columns we want in the final output, in this specific order
     final_output_cols_desired_display = [
         'Valid From', 'Bukr.', 'Type', 'EBSNO', 'Supplier Name', 'Street',
@@ -954,7 +950,6 @@ def process_pmd_lookup_core(request_files, temp_dir):
     cleaned_to_original_dump_map['assigned_output'] = 'Assigned'
 
     # Select and rename columns for the final output DataFrame
-    # Start with all columns from final_output_df, then rename
     final_cols_for_rename = {}
     for col in final_output_df.columns:
         if col in cleaned_to_original_dump_map:
@@ -962,13 +957,12 @@ def process_pmd_lookup_core(request_files, temp_dir):
     
     final_output_df.rename(columns=final_cols_for_rename, inplace=True)
 
-    # Ensure 'Valid From' is formatted as MM/DD/YYYY HH:MM AM/PM
-    # Using the 'valid_from_dt' (datetime object) that we created for consistency
-    if 'valid_from_dt' in final_output_df.columns and 'Valid From' in final_output_df.columns:
-        final_output_df['Valid From'] = final_output_df['valid_from_dt'].dt.strftime('%Y-%m-%d %I:%M %p')
-    
-    # Drop temporary columns used for processing
-    final_output_df.drop(columns=['valid_from_dt', 'comp_key'], errors='ignore', inplace=True)
+    # --- MODIFICATION START ---
+    # No date formatting for 'Valid From' anymore, it remains as its raw string value
+    # No 'valid_from_dt' column to drop as it's not created
+    # Ensure 'comp_key' is dropped after its use
+    final_output_df.drop(columns=['comp_key'], errors='ignore', inplace=True)
+    # --- MODIFICATION END ---
 
     # Reorder columns to match the desired display order and filter out any non-existent columns
     final_output_df = final_output_df[[col for col in final_output_cols_desired_display if col in final_output_df.columns]]
