@@ -560,8 +560,9 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     uploaded_files = {}
 
     # --- Handle required files ---
-    # !!! CORRECTED: Changed 'rgba_file' back to 'rgpa_file' to match HTML form !!!
-    required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgpa_file', 'central_file']
+    # !!! CORRECTED: Changed 'central_file' key to 'b_segment_central_file'
+    # !!! REMINDER: 'rgpa_file' in HTML maps to 'rgba_file_path' in Python for internal use.
+    required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgpa_file', 'b_segment_central_file']
     for key in required_file_keys:
         file = request_files.get(key)
         if not file or file.filename == '':
@@ -597,10 +598,10 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     esm_file_path = uploaded_files['esm_file']
     pm7_file_path = uploaded_files['pm7_file']
     workon_file_path = uploaded_files['workon_file'] # This will be path or None
-    # !!! CORRECTED: Retrieve 'rgpa_file' from uploaded_files, but assign to rgba_file_path !!!
-    rgba_file_path = uploaded_files['rgpa_file']
+    rgba_file_path = uploaded_files['rgpa_file'] # !!! CORRECTED: Retrieve 'rgpa_file' from uploaded_files !!!
     smd_file_path = uploaded_files['smd_file'] # This will be path or None
-    initial_central_file_input_path = uploaded_files['central_file']
+    # !!! CORRECTED: Retrieve 'b_segment_central_file' from uploaded_files !!!
+    initial_central_file_input_path = uploaded_files['b_segment_central_file']
 
     df_pisa_original = None
     df_esm_original = None
