@@ -615,19 +615,32 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
 
             if 'Company code' in df_final_central.columns:
                 df_final_central['Company code_lookup'] = df_final_central['Company code'].astype(str).str.strip().str.upper().str[:4]
-                mapped_regions = df_final_central['Company code_lookup'].map(region_map)
+                
+                # Apply the map. This creates a Series of new regions or NaNs.
+                new_mapped_regions = df_final_central['Company code_lookup'].map(region_map)
 
-                mask_blank_or_na_region = df_final_central['Region'].replace('', pd.NA).isna()
-                df_final_central.loc[mask_blank_or_na_region, 'Region'] = mapped_regions.loc[mask_blank_or_na_region].fillna(df_final_central.loc[mask_blank_or_na_region, 'Region'])
+                # Ensure 'Region' column exists, if not, create it as empty strings
+                if 'Region' not in df_final_central.columns:
+                    df_final_central['Region'] = ''
+                
+                # Replace empty strings in 'Region' with actual pd.NA for consistent filling
+                df_final_central['Region'] = df_final_central['Region'].replace('', pd.NA) 
+
+                # Only fill NaNs in 'Region' with values from 'new_mapped_regions'
+                # This ensures existing, non-NaN 'Region' values are preserved.
+                df_final_central['Region'] = df_final_central['Region'].fillna(new_mapped_regions)
+
+                # Ensure all regions are strings and fill any remaining NaNs (if no mapping was found) with empty strings
+                df_final_central['Region'] = df_final_central['Region'].astype(str).replace('nan', '')
                 
                 df_final_central = df_final_central.drop(columns=['Company code_lookup'])
-                df_final_central['Region'] = df_final_central['Region'].fillna('') 
                 print("Region mapping applied successfully. Existing regions prioritized.")
             else:
                 print("Warning: 'Company code' column not found in final central DataFrame. Cannot apply region mapping.")
                 if 'Region' not in df_final_central.columns:
                     df_final_central['Region'] = ''
-                df_final_central['Region'] = df_final_central['Region'].fillna('')
+                df_final_central['Region'] = df_final_central['Region'].fillna('') # Ensure it's filled even if no mapping happens
+
 
     date_cols_in_central_file = [
         'Received Date', 'Re-Open Date', 'Allocation Date',
@@ -672,7 +685,12 @@ def process_files():
 
     session['temp_dir'] = temp_dir
 
-    REGION_MAPPING_FILE_PATH = os.path.join(BASE_DIR, '..', 'company_code_region_mapping.xlsx')
+    # Use os.path.join for robustness across OS
+    REGION_MAPPING_FILE_PATH = os.path.join(BASE_DIR, 'company_code_region_mapping.xlsx') 
+    # ^^^ IMPORTANT: Changed path. Assuming company_code_region_mapping.xlsx is in the same directory as app.py.
+    # If it's in a 'data' folder next to app.py, it would be:
+    # REGION_MAPPING_FILE_PATH = os.path.join(BASE_DIR, 'data', 'company_code_region_mapping.xlsx')
+
 
     try:
         uploaded_files = {}
@@ -742,7 +760,7 @@ def process_files():
                 df_region_mapping = pd.read_excel(REGION_MAPPING_FILE_PATH)
                 print(f"Successfully loaded region mapping file from: {REGION_MAPPING_FILE_PATH}")
             else:
-                flash(f"Error: Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty.", 'warning')
+                flash(f"Warning: Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty for records relying solely on this mapping.", 'warning')
         
         except Exception as e:
             flash(f"Error loading one or more input Excel files or the region mapping file: {e}. Please ensure all files are valid .xlsx formats and the mapping file exists.", 'error')
