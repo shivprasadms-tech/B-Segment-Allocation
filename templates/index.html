@@ -256,10 +256,16 @@
                 <label for="pm7_file">Upload PM7 Excel File (.xlsx):</label>
                 <input type="file" name="pm7_file" id="pm7_file" accept=".xlsx" required>
             </div>
-            {# NEW CHANGE: Add Workon P71 file input field #}
+            {# NEW CHANGE: Make Workon P71 file input optional #}
             <div class="form-group">
-                <label for="workon_file">Upload Workon P71 Excel File (.xlsx):</label>
-                <input type="file" name="workon_file" id="workon_file" accept=".xlsx" required>
+                <label for="workon_file">Upload Workon P71 Excel File (.xlsx) (Optional):</label>
+                <input type="file" name="workon_file" id="workon_file" accept=".xlsx"> {# Removed 'required' #}
+            </div>
+            {# END NEW CHANGE #}
+            {# NEW CHANGE: Add RGPA file input field (required) #}
+            <div class="form-group">
+                <label for="rgpa_file">Upload RGPA Excel File (.xlsx):</label>
+                <input type="file" name="rgpa_file" id="rgpa_file" accept=".xlsx" required>
             </div>
             {# END NEW CHANGE #}
             <div class="form-group">
@@ -313,8 +319,8 @@
                         <li><strong>Received date</strong> (with a space after received, mapped from 'Creation date')</li>
                     </ul>
                 </li>
-                {# NEW CHANGE: Add Workon P71 Mandatory Columns rule #}
-                <li><strong>Workon P71 Mandatory Columns:</strong> After internal processing, the Workon P71 file should contain the following columns:
+                {# NEW CHANGE: Update Workon P71 rules for optionality and new total file count #}
+                <li><strong>Workon P71 Mandatory Columns (Optional):</strong> If provided, the Workon P71 file should contain the following columns:
                     <ul>
                         <li><strong>key</strong> (mapped to Barcode)</li>
                         <li><strong>action</strong> (mapped to Category)</li>
@@ -330,7 +336,22 @@
                     For Workon P71 records, <strong>Processor</strong> will be set to "Jayapal" and <strong>Channel</strong> to "Workon". <strong>Allocation Date</strong> will be today's date. Other date/aging fields will be blank.
                 </li>
                 {# END NEW CHANGE #}
-                <li><strong>Processing & Upload:</strong> Upload the ESM, PISA, PM7, Workon P71, and Central files. Then, click on the <strong>"Process Files"</strong> button. The new updated tracker file will be automatically downloaded and will be ready for allocation.</li> {# NEW CHANGE: Update message #}
+                {# NEW CHANGE: Add RGPA Mandatory Columns rule #}
+                <li><strong>RGPA Mandatory Columns:</strong> After internal processing, the RGPA file should contain the following columns:
+                    <ul>
+                        <li><strong>key</strong> (mapped to Barcode)</li>
+                        <li><strong>company code</strong> (mapped to Company code)</li>
+                        <li><strong>updated</strong> (mapped to Received Date)</li>
+                        <li><strong>summary</strong> (mapped to Remarks)</li>
+                        <li><strong>current assignee</strong> (used for filtering)</li>
+                    </ul>
+                    Records will be filtered where <strong>'Current Assignee'</strong> is "VMD GS OSP-NA (GS/OMD-APAC)".
+                    For RGPA records, <strong>Processor</strong> will be set to "Divya" and <strong>Channel</strong> to "RGPA". <strong>Allocation Date</strong> will be today's date. The <strong>Region</strong> will be automatically mapped based on the 'Company code' from the external mapping file. Other fields will be blank.
+                </li>
+                {# END NEW CHANGE #}
+                {# NEW CHANGE: Update processing message to include RGPA #}
+                <li><strong>Processing & Upload:</strong> Upload the ESM, PISA, PM7, RGPA, (optionally Workon P71), and Central files. Then, click on the <strong>"Process Files"</strong> button. The new updated tracker file will be automatically downloaded and will be ready for allocation.</li>
+                {# END NEW CHANGE #}
                 <li><strong>Post-Processing Actions:</strong>
                     <ul>
                         <li><strong>Rename & Upload:</strong> Replace the newly downloaded file by renaming it to <code>New B_Segment(DD_MM_YYYY)</code> with <strong>today's date</strong> in the Teams channel.</li>
