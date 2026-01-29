@@ -33,7 +33,7 @@ CONSOLIDATED_OUTPUT_COLUMNS = [
 
 ALLOWED_EXTENSIONS = {'xls', 'xlsx'}
 
-# --- Helper Functions (keep existing, add the new PMD one) ---
+# --- Helper Functions ---
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -863,6 +863,7 @@ def process_pmd_lookup_core(request_files, temp_dir):
 
     try:
         # Load and clean PMD Central File
+        # Use keep_default_na=False to prevent empty strings from being read as NaN
         df_central_pmd_original = pd.read_excel(pmd_central_file_path, keep_default_na=False)
         df_central_pmd = clean_column_names(df_central_pmd_original.copy())
         
@@ -905,7 +906,6 @@ def process_pmd_lookup_core(request_files, temp_dir):
 
     # --- Apply the provided logic ---
     def determine_status(row):
-        # Access cleaned column names
         dump_comp_key = row['comp_key']
 
         # No match → New
@@ -924,76 +924,51 @@ def process_pmd_lookup_core(request_files, temp_dir):
         return 'Hold', central_assigned
 
     # Apply the status determination
-    df_pmd_dump[['status_result', 'assigned_result']] = df_pmd_dump.apply(
+    df_pmd_dump[['Status_Output', 'Assigned_Output']] = df_pmd_dump.apply(
         lambda r: determine_status(r),
         axis=1,
         result_type='expand'
     )
     logging.info("Status and Assigned results determined for PMD Dump records.")
 
-    # Remove ignored rows (where status_result is None)
-    final_output_df = df_pmd_dump[df_pmd_dump['status_result'].notna()].copy()
+    # Remove ignored rows (where Status_Output is None)
+    final_output_df = df_pmd_dump[df_pmd_dump['Status_Output'].notna()].copy()
 
-    # Update 'Status' and 'Assigned' columns in the final output DataFrame
-    final_output_df['Status'] = final_output_df['status_result']
-    final_output_df['Assigned'] = final_output_df['assigned_result']
+    # Rename the output status/assigned columns to their desired final names
+    final_output_df['Status'] = final_output_df['Status_Output']
+    final_output_df['Assigned'] = final_output_df['Assigned_Output']
 
-    # Drop temporary/helper columns
-    final_output_df = final_output_df.drop(columns=['valid_from_key', 'supplier_name_key', 'comp_key', 'status_result', 'assigned_result'])
+    # --- Prepare final output DataFrame ---
     
-    # Re-apply original column names for output, keeping the newly generated Status/Assigned
-    # Map cleaned names back to original if needed, or simply output with cleaned names.
-    # For now, let's assume we want to output with cleaned names, and then specifically
-    # rename 'status' and 'assigned' to their title-case versions as required by the UI rule.
+    # Get all cleaned columns from the original PMD Dump that we want to keep
+    # This will ensure we preserve the structure of the input dump file
+    dump_columns_to_keep = [col for col in df_pmd_dump.columns if col not in ['valid_from_key', 'supplier_name_key', 'comp_key', 'Status_Output', 'Assigned_Output']]
     
-    # Get original columns from the *dump* file which are to be included, plus the new Status and Assigned
-    # The rule specifies: Valid From, Supplier Name, and optionally other columns.
-    # So we'll try to reconstruct based on original dump columns + new status/assigned.
-    output_columns = [
-        col for col in df_pmd_dump_original.columns if clean_column_names(pd.DataFrame(columns=[col])).columns[0] in final_output_df.columns
-    ]
-    # Add new Status and Assigned, ensuring they are at the end if not explicitly in output_columns
-    if 'Status' not in output_columns:
-        output_columns.append('Status')
-    if 'Assigned' not in output_columns:
-        output_columns.append('Assigned')
+    # Select these columns from the final_output_df
+    final_output_df = final_output_df[dump_columns_to_keep + ['Status', 'Assigned']]
 
-    # Rename cleaned columns in final_output_df to match original expectations for Status/Assigned if needed.
-    # The problem statement in HTML expects 'Status' and 'Assigned' (capitalized).
-    # Since we explicitly created 'Status' and 'Assigned' above, this should be fine.
-    # For other columns, if `clean_column_names` modifies them, we might need to map them back.
-    # A simpler approach for output is to use the cleaned column names and just ensure Status/Assigned are there.
+    # Now, rename the cleaned columns back to their original names from df_pmd_dump_original
+    # but only for the columns that were in the original dump.
+    # The 'Status' and 'Assigned' columns are already correctly capitalized.
     
-    # Let's decide on the final output columns explicitly based on the rule:
-    # "Valid From", "Supplier Name", optionally other columns, and the new "Status", "Assigned".
+    # Create a mapping from cleaned column names to original column names
+    cleaned_to_original_map = {clean_column_names(pd.DataFrame(columns=[col])).columns[0]: col for col in df_pmd_dump_original.columns}
     
-    # Get all columns from the original PMD Dump file, and rename them to their cleaned versions to match final_output_df
-    original_dump_cols_cleaned = {
-        col: clean_column_names(pd.DataFrame(columns=[col])).columns[0]
-        for col in df_pmd_dump_original.columns
-    }
-    
-    # Select the relevant columns from final_output_df, using the original column names as reference
-    final_cols_to_keep = []
-    # Preserve original order and capitalization of common columns
-    for original_col in df_pmd_dump_original.columns:
-        cleaned_col = clean_column_names(pd.DataFrame(columns=[original_col])).columns[0]
-        if cleaned_col in final_output_df.columns:
-            final_cols_to_keep.append(cleaned_col)
-            # Rename back to original if they are not 'status' or 'assigned' which we handled specifically
-            # This is to ensure output matches expected original headers + new Status/Assigned
-            final_output_df.rename(columns={cleaned_col: original_col}, inplace=True)
+    # Apply this mapping, excluding 'Status' and 'Assigned' which we named explicitly
+    columns_to_rename_back = {cleaned_col: original_col for cleaned_col, original_col in cleaned_to_original_map.items() if cleaned_col in final_output_df.columns and cleaned_col not in ['status', 'assigned']}
+    final_output_df.rename(columns=columns_to_rename_back, inplace=True)
 
-    # Ensure 'Status' and 'Assigned' are present and in final list (they were added already with correct capitalization)
-    if 'Status' not in final_cols_to_keep:
-        final_cols_to_keep.append('Status')
-    if 'Assigned' not in final_cols_to_keep:
-        final_cols_to_keep.append('Assigned')
-
-    final_output_df = final_output_df[final_cols_to_keep]
+    # Reorder columns to match the original dump file's order, followed by 'Status' and 'Assigned'
+    final_column_order = [col for col in df_pmd_dump_original.columns if col in final_output_df.columns]
+    if 'Status' not in final_column_order:
+        final_column_order.append('Status')
+    if 'Assigned' not in final_column_order:
+        final_column_order.append('Assigned')
+        
+    final_output_df = final_output_df[final_column_order]
 
     # Format 'Valid From' back to MM/DD/YYYY if it's a date column
-    # We should detect the original column name for 'valid_from' to do this
+    # Use the actual original column name for 'Valid From'
     original_valid_from_col_name = None
     for original_col in df_pmd_dump_original.columns:
         if clean_column_names(pd.DataFrame(columns=[original_col])).columns[0] == 'valid_from':
@@ -1002,6 +977,12 @@ def process_pmd_lookup_core(request_files, temp_dir):
 
     if original_valid_from_col_name and original_valid_from_col_name in final_output_df.columns:
         final_output_df[original_valid_from_col_name] = format_date_to_mdyyyy(final_output_df[original_valid_from_col_name])
+    
+    # Ensure all string columns that are meant to be empty strings are not 'None' or 'nan'
+    for col in final_output_df.columns:
+        if final_output_df[col].dtype == 'object':
+            final_output_df[col] = final_output_df[col].fillna('')
+
 
     today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
     pmd_output_filename = f'PMD_Lookup_Result_{today_str}.xlsx'
