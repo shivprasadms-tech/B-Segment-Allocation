@@ -560,7 +560,8 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     uploaded_files = {}
 
     # --- Handle required files ---
-    required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgba_file', 'central_file'] # Changed rgpa_file to rgba_file
+    # !!! CORRECTED: Changed 'rgba_file' back to 'rgpa_file' to match HTML form !!!
+    required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgpa_file', 'central_file']
     for key in required_file_keys:
         file = request_files.get(key)
         if not file or file.filename == '':
@@ -587,44 +588,44 @@ def process_b_segment_allocation_core(request_files, temp_dir):
                 flash(f'Optional file "{filename}" uploaded successfully.', 'info')
             else:
                 flash(f'Invalid file type for optional file "{key}". It must be an .xlsx file.', 'warning')
-                uploaded_files[key] = pd.DataFrame() # Provide empty DataFrame if invalid optional file
+                uploaded_files[key] = None # Set to None if invalid
         else:
             logging.info(f'Optional file "{key}" not provided. Continuing without it.')
-            uploaded_files[key] = pd.DataFrame() # Provide empty DataFrame if not provided
+            uploaded_files[key] = None # Set to None if not provided
 
     pisa_file_path = uploaded_files['pisa_file']
     esm_file_path = uploaded_files['esm_file']
     pm7_file_path = uploaded_files['pm7_file']
-    workon_file_path = uploaded_files['workon_file'] # This will be path or empty DataFrame
-    rgba_file_path = uploaded_files['rgba_file']
-    smd_file_path = uploaded_files['smd_file'] # This will be path or empty DataFrame
+    workon_file_path = uploaded_files['workon_file'] # This will be path or None
+    # !!! CORRECTED: Retrieve 'rgpa_file' from uploaded_files, but assign to rgba_file_path !!!
+    rgba_file_path = uploaded_files['rgpa_file']
+    smd_file_path = uploaded_files['smd_file'] # This will be path or None
     initial_central_file_input_path = uploaded_files['central_file']
 
     df_pisa_original = None
     df_esm_original = None
     df_pm7_original = None
-    df_workon_original = pd.DataFrame() # Initialize as empty
+    df_workon_original = pd.DataFrame() # Initialize as empty DataFrame
     df_rgba_original = None
-    df_smd_original = pd.DataFrame() # Initialize as empty
+    df_smd_original = pd.DataFrame() # Initialize as empty DataFrame
     df_region_mapping = pd.DataFrame()
 
     try:
         df_pisa_original = pd.read_excel(pisa_file_path)
         df_esm_original = pd.read_excel(esm_file_path)
         df_pm7_original = pd.read_excel(pm7_file_path)
-        df_rgba_original = pd.read_excel(rgba_file_path) # Changed here
+        df_rgba_original = pd.read_excel(rgba_file_path) # Uses the corrected rgba_file_path
 
-        if isinstance(workon_file_path, str) and os.path.exists(workon_file_path): # Check if it's a path, not empty DF
+        # Handle optional files: check if path exists before reading
+        if workon_file_path and os.path.exists(workon_file_path):
             df_workon_original = pd.read_excel(workon_file_path)
         else:
-            logging.info("Workon P71 file not loaded (not provided or invalid).")
+            logging.info("Workon P71 file not loaded (not provided, invalid, or empty).")
 
-
-        if isinstance(smd_file_path, str) and os.path.exists(smd_file_path): # Check if it's a path, not empty DF
+        if smd_file_path and os.path.exists(smd_file_path):
             df_smd_original = pd.read_excel(smd_file_path)
         else:
-            logging.info("SMD file not loaded (not provided or invalid).")
-
+            logging.info("SMD file not loaded (not provided, invalid, or empty).")
 
         if os.path.exists(REGION_MAPPING_FILE_PATH):
             df_region_mapping = pd.read_excel(REGION_MAPPING_FILE_PATH)
@@ -644,20 +645,17 @@ def process_b_segment_allocation_core(request_files, temp_dir):
 
     # Check if df_consolidated_pisa_esm_pm7 is valid for subsequent steps
     if df_consolidated_pisa_esm_pm7.empty and (not df_pisa_original.empty or not df_esm_original.empty or not df_pm7_original.empty):
-        # If input was given for PISA/ESM/PM7 but no data was consolidated (e.g., due to errors/filters)
         logging.warning("Consolidation of PISA/ESM/PM7 files resulted in no data, but input files were provided. Check logs for potential filtering or column errors.")
-        # Do not return False, allow processing to continue as other steps might still be valid (e.g., direct appends)
         flash("Warning: PISA/ESM/PM7 consolidation yielded no records. Check if input files were empty or if data was filtered out.", 'warning')
     elif not df_consolidated_pisa_esm_pm7.empty:
-        # Only flash success if there was actual data consolidated
         flash('Primary data consolidation from PISA, ESM, PM7 completed successfully!', 'success')
-        # Optionally save this intermediate consolidated file if desired, but not critical for final output
+        # Consolidated output file saving is optional, commented out as it's an intermediate
         # consolidated_output_filename = f'ConsolidatedData_PISA_ESM_PM7_{today_str}.xlsx'
         # consolidated_output_file_path = os.path.join(temp_dir, consolidated_output_filename)
         # try:
         #     df_consolidated_pisa_esm_pm7.to_excel(consolidated_output_file_path, index=False)
         #     logging.info(f"Primary consolidated file saved to: {consolidated_output_file_path}")
-        #     session['consolidated_output_path'] = consolidated_output_file_path # Store path if needed for download
+        #     session['consolidated_output_path'] = consolidated_output_file_path
         # except Exception as e:
         #     logging.warning(f"Could not save primary consolidated file: {e}")
 
@@ -670,8 +668,7 @@ def process_b_segment_allocation_core(request_files, temp_dir):
         return False, f'Central File Processing (Step 2) Error: {result_df}', None
     df_central_updated_existing = result_df
 
-    # --- Step 3: Final Merge (Add new barcodes from P/E/PM7, mark 'Needs Review',
-    #               and directly append Workon, RGBA, SMD with Region Mapping) ---
+    # --- Step 3: Final Merge ---
     final_central_output_filename = f'CentralFile_FinalOutput_{today_str}.xlsx'
     final_central_output_file_path = os.path.join(temp_dir, final_central_output_filename)
     success, message = process_central_file_step3_final_merge_and_needs_review(
