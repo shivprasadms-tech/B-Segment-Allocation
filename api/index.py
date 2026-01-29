@@ -374,22 +374,32 @@ def process_central_file_step3_final_merge_and_needs_review(
 
 
     # --- 4. Directly map and append RGBA records ---
-    if df_rgba_original is not None and not df_rgba_original.empty:
+    logging.info("Attempting to process RGBA records for direct appending.")
+    if df_rgba_original is None:
+        logging.warning("RGBA original DataFrame is None. Was the RGPA file uploaded and read successfully?")
+    elif df_rgba_original.empty:
+        logging.info("RGBA original DataFrame is empty. Skipping RGBA processing.")
+    else:
         df_rgba_cleaned = clean_column_names(df_rgba_original.copy())
-        # Apply filtering for RGBA
-        if 'current_assignee' in df_rgba_cleaned.columns:
-            filter_mask = df_rgba_cleaned['current_assignee'].astype(str).str.contains("VMD GS OSP-NA (GS/OMD-APAC)", na=False)
-            df_rgba_filtered = df_rgba_cleaned[filter_mask].copy()
-            logging.info(f"RGBA file filtered. Original records: {len(df_rgba_cleaned)}, Records after filter: {len(df_rgba_filtered)}")
-        else:
-            logging.warning("Warning: 'current_assignee' column not found in RGBA file. No filter applied for RGBA.")
-            df_rgba_filtered = df_rgba_cleaned.copy()
+        logging.info(f"RGBA file has {len(df_rgba_cleaned)} records after cleaning column names.")
+        
+        # --- FILTER REMOVED ---
+        df_rgba_filtered = df_rgba_cleaned.copy() 
+        logging.info("RGBA 'current_assignee' filter has been explicitly removed. All RGBA records will be considered.")
+        # --- END FILTER REMOVED ---
 
-        if 'key' not in df_rgba_filtered.columns:
-            logging.error("Error: 'key' column not found in RGBA file (after cleaning). Skipping RGBA processing.")
+        if df_rgba_filtered.empty:
+            logging.info("RGBA DataFrame is empty after (no) filtering. No RGBA records to process.")
+        elif 'key' not in df_rgba_filtered.columns:
+            logging.error("Error: 'key' column not found in RGBA file after cleaning. Skipping RGBA processing.")
+            logging.debug(f"Columns available in filtered RGBA: {df_rgba_filtered.columns.tolist()}")
         else:
             rgba_records_to_append = []
             for index, row in df_rgba_filtered.iterrows():
+                # Log a sample of row data for debugging
+                if index < 5: # Log first 5 rows for inspection
+                    logging.debug(f"Processing RGBA row (sample): Barcode={row.get('key')}, Company_code={row.get('company_code')}, Updated={row.get('updated')}")
+                
                 new_row = {
                     'Barcode': str(row['key']), # Ensure barcode is string
                     'Processor': 'Divya',
@@ -415,11 +425,9 @@ def process_central_file_step3_final_merge_and_needs_review(
                 df_rgba_appended = pd.DataFrame(rgba_records_to_append)
                 df_rgba_appended = df_rgba_appended.reindex(columns=CONSOLIDATED_OUTPUT_COLUMNS)
                 df_final_central = pd.concat([df_final_central, df_rgba_appended], ignore_index=True)
-                logging.info(f"Appended {len(df_rgba_appended)} records from RGBA directly.")
+                logging.info(f"Successfully appended {len(df_rgba_appended)} records from RGBA directly.")
             else:
-                logging.info("No records to append from RGBA after mapping.")
-    else:
-        logging.info("RGBA file not provided or is empty. Skipping RGBA processing.")
+                logging.info("No records generated from RGBA for appending after individual row processing (might be due to missing keys or unexpected values).")
 
 
     # --- 5. Directly map and append SMD records ---
