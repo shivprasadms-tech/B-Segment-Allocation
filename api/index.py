@@ -95,10 +95,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7, df_workon, df_rgpa, consol
                 'Company code': row.get('company_code'),
                 'Vendor number': row.get('vendor_number'),
                 'Received Date': row.get('received_date'),
-                'Completion Date': None,
-                'Status': row.get('status'), # <--- Modified: Get Status from PISA data
-                'Today': today_date,
-                'Channel': 'PISA',
+                'Completion Date': None, 'Status': None , 'Today': today_date, 'Channel': 'PISA',
                 'Vendor Name': row.get('vendor_name'),
                 'Re-Open Date': None, 'Allocation Date': None,
                 'Requester': None, 'Clarification Date': None, 'Aging': None, 'Remarks': None,
@@ -159,7 +156,6 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7, df_workon, df_rgpa, consol
         print(f"Collected {len(df_pm7)} rows from PM7.")
 
     # --- Workon P71 Processing (Optional) ---
-    # No changes here, already handles optionality.
     if not df_workon_cleaned.empty:
         if 'key' not in df_workon_cleaned.columns:
             print("Error: 'key' column not found in Workon file (after cleaning). Skipping Workon processing.")
@@ -196,15 +192,17 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7, df_workon, df_rgpa, consol
         print("Warning: RGPA file is empty. Skipping RGPA processing.")
     elif 'key' not in df_rgpa_cleaned.columns:
         print("Error: 'key' column not found in RGPA file (after cleaning). Skipping RGPA processing.")
-    elif 'current_assignee' not in df_rgpa_cleaned.columns: # Check for the filter column
-        print("Warning: 'current_assignee' column not found in RGPA file (after cleaning). Skipping RGPA processing due to missing filter column.")
     else:
         original_rgpa_count = len(df_rgpa_cleaned)
-        # Apply the filter based on 'current_assignee'
-        filter_mask = df_rgpa_cleaned['current_assignee'].astype(str).str.contains("VMD GS OSP-NA (GS/OMD-APAC)", na=False)
-        df_rgpa_filtered = df_rgpa_cleaned[filter_mask].copy()
-        
-        print(f"\nRGPA file filtered. Original records: {original_rgpa_count}, Records after filter: {len(df_rgpa_filtered)}")
+        df_rgpa_filtered = df_rgpa_cleaned.copy() 
+        if 'current_assignee' in df_rgpa_cleaned.columns:
+            # Safely check for string content in 'current_assignee'
+            # Convert to string and handle potential NaN values explicitly
+            filter_mask = df_rgpa_cleaned['current_assignee'].astype(str).str.contains("VMD GS OSP-NA (GS/OMD-APAC)", na=False)
+            df_rgpa_filtered = df_rgpa_cleaned[filter_mask].copy()
+            print(f"\nRGPA file filtered. Original records: {original_rgpa_count}, Records after filter: {len(df_rgpa_filtered)}")
+        else:
+            print("Warning: 'current_assignee' column not found in RGPA file (after cleaning). No filter applied for RGPA.")
             
         df_rgpa_filtered['key'] = df_rgpa_filtered['key'].astype(str)
         for index, row in df_rgpa_filtered.iterrows():
@@ -212,21 +210,21 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7, df_workon, df_rgpa, consol
                 'Barcode': row['key'],
                 'Processor': 'Divya',
                 'Channel': 'RGPA',    
-                'Category': None,     # As specified, blank
+                'Category': None,     
                 'Company code': row.get('company_code'),
-                'Region': None,       # Will be mapped later in Step 3
-                'Vendor number': None, # As specified, blank
-                'Vendor Name': None,  # As specified, blank
-                'Status': None,       # As specified, blank
+                'Region': None,       
+                'Vendor number': None,
+                'Vendor Name': None,  
+                'Status': None,       
                 'Received Date': row.get('updated'),
-                'Re-Open Date': None, # As specified, blank
+                'Re-Open Date': None, 
                 'Allocation Date': today_date_formatted,
-                'Clarification Date': None, # As specified, blank
-                'Completion Date': None, # As specified, blank
-                'Requester': None,    # As specified, blank
+                'Clarification Date': None,
+                'Completion Date': None,
+                'Requester': None,    
                 'Remarks': row.get('summary'),
-                'Aging': None,        # As specified, blank
-                'Today': today_date   # Today's datetime object, will be formatted to m/d/yyyy
+                'Aging': None,        
+                'Today': today_date   
             }
             all_consolidated_rows.append(new_row)
         print(f"Collected {len(df_rgpa_filtered)} rows from RGPA.")
@@ -285,10 +283,7 @@ def process_central_file_step2_update_existing(consolidated_df, central_file_inp
 
     df_central_cleaned['Barcode_compare'] = df_central_cleaned['barcode']
 
-    # Include RGPA in channels for status change if its status needs to affect central file's status
-    # Based on your request, RGPA has 'Status': None for new records, so it won't trigger status changes here.
-    # If RGPA had a status you wanted to react to, you'd add 'RGPA' here.
-    channels_for_status_change = ['PISA', 'ESM', 'PM7'] 
+    channels_for_status_change = ['PISA', 'ESM', 'PM7']
     consolidated_barcodes_for_status_change_set = set(
         consolidated_df[consolidated_df['Channel'].isin(channels_for_status_change)]['Barcode'].unique()
     )
@@ -407,9 +402,8 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
     else:
         print("Workon lookup not created as file was not provided or empty.")
 
-    # RGPA lookup needs to be filtered here if it's used for populating new records
     df_rgpa_indexed = pd.DataFrame()
-    if not df_rgpa_lookup.empty: 
+    if not df_rgpa_lookup.empty: # Add check for empty RGPA lookup before processing
         if 'key' in df_rgpa_lookup.columns:
             if 'current_assignee' in df_rgpa_lookup.columns:
                 df_rgpa_lookup_filtered = df_rgpa_lookup[
@@ -448,7 +442,6 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
         barcode = row_consolidated['Barcode']
         channel = row_consolidated['Channel']
 
-        # Initialize with values from consolidated_df (which might be None or blank for many)
         vendor_name = row_consolidated.get('Vendor Name')
         vendor_number = row_consolidated.get('Vendor number')
         company_code = row_consolidated.get('Company code')
@@ -459,63 +452,73 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
         remarks = row_consolidated.get('Remarks')
         status = row_consolidated.get('Status')
         region = row_consolidated.get('Region')
-        allocation_date = row_consolidated.get('Allocation Date')
 
 
-        # Override with more specific source data if available and not already set by consolidated_df
         if channel == 'PISA' and not df_pisa_indexed.empty and barcode in df_pisa_indexed.index:
             pisa_row = df_pisa_indexed.loc[barcode]
-            # Only update if current value is None/blank, or if original data is more specific
-            vendor_name = pisa_row.get('vendor_name', vendor_name) if pd.notna(pisa_row.get('vendor_name')) else vendor_name
-            vendor_number = pisa_row.get('vendor_number', vendor_number) if pd.notna(pisa_row.get('vendor_number')) else vendor_number
-            company_code = pisa_row.get('company_code', company_code) if pd.notna(pisa_row.get('company_code')) else company_code
-            received_date = pisa_row.get('received_date', received_date) if pd.notna(pisa_row.get('received_date')) else received_date
-            status = pisa_row.get('status', status) if pd.notna(pisa_row.get('status')) else status # Capture PISA status here
+            if 'vendor_name' in pisa_row.index and pd.notna(pisa_row['vendor_name']):
+                vendor_name = pisa_row['vendor_name']
+            if 'vendor_number' in pisa_row.index and pd.notna(pisa_row['vendor_number']):
+                vendor_number = pisa_row['vendor_number']
+            if 'company_code' in pisa_row.index and pd.notna(pisa_row['company_code']):
+                company_code = pisa_row['company_code']
+            if 'received_date' in pisa_row.index and pd.notna(pisa_row['received_date']):
+                received_date = pisa_row['received_date']
 
         elif channel == 'ESM' and not df_esm_indexed.empty and barcode in df_esm_indexed.index:
             esm_row = df_esm_indexed.loc[barcode]
-            company_code = esm_row.get('company_code', company_code) if pd.notna(esm_row.get('company_code')) else company_code
-            category = esm_row.get('subcategory', category) if pd.notna(esm_row.get('subcategory')) else category
-            vendor_name = esm_row.get('vendor_name', vendor_name) if pd.notna(esm_row.get('vendor_name')) else vendor_name
-            vendor_number = esm_row.get('vendor_number', vendor_number) if pd.notna(esm_row.get('vendor_number')) else vendor_number
-            received_date = esm_row.get('received_date', received_date) if pd.notna(esm_row.get('received_date')) else received_date
-            requester = esm_row.get('opened_by', requester) if pd.notna(esm_row.get('opened_by')) else requester
-            status = esm_row.get('state', status) if pd.notna(esm_row.get('state')) else status
-            remarks = esm_row.get('short_description', remarks) if pd.notna(esm_row.get('short_description')) else remarks
+            if 'company_code' in esm_row.index and pd.notna(esm_row['company_code']):
+                company_code = esm_row['company_code']
+            if 'subcategory' in esm_row.index and pd.notna(esm_row['subcategory']):
+                category = esm_row['subcategory']
+            if 'vendor_name' in esm_row.index and pd.notna(esm_row['vendor_name']):
+                vendor_name = esm_row['vendor_name']
+            if 'vendor_number' in esm_row.index and pd.notna(esm_row['vendor_number']):
+                vendor_number = esm_row['vendor_number']
+            if 'received_date' in esm_row.index and pd.notna(esm_row['received_date']):
+                received_date = esm_row['received_date']
+            if 'opened_by' in esm_row.index and pd.notna(esm_row['opened_by']):
+                requester = esm_row['opened_by']
+            if 'state' in esm_row.index and pd.notna(esm_row['state']):
+                status = esm_row['state']
+            if 'short_description' in esm_row.index and pd.notna(esm_row['short_description']):
+                remarks = esm_row['short_description']
 
         elif channel == 'PM7' and not df_pm7_indexed.empty and barcode in df_pm7_indexed.index:
             pm7_row = df_pm7_indexed.loc[barcode]
-            vendor_name = pm7_row.get('vendor_name', vendor_name) if pd.notna(pm7_row.get('vendor_name')) else vendor_name
-            vendor_number = pm7_row.get('vendor_number', vendor_number) if pd.notna(pm7_row.get('vendor_number')) else vendor_number
-            company_code = pm7_row.get('company_code', company_code) if pd.notna(pm7_row.get('company_code')) else company_code
-            received_date = pm7_row.get('received_date', received_date) if pd.notna(pm7_row.get('received_date')) else received_date
-            status = pm7_row.get('task', status) if pd.notna(pm7_row.get('task')) else status
+            if 'vendor_name' in pm7_row.index and pd.notna(pm7_row['vendor_name']):
+                vendor_name = pm7_row['vendor_name']
+            if 'vendor_number' in pm7_row.index and pd.notna(pm7_row['vendor_number']):
+                vendor_number = pm7_row['vendor_number']
+            if 'company_code' in pm7_row.index and pd.notna(pm7_row['company_code']):
+                company_code = pm7_row['company_code']
+            if 'received_date' in pm7_row.index and pd.notna(pm7_row['received_date']):
+                received_date = pm7_row['received_date']
+            if 'task' in pm7_row.index and pd.notna(pm7_row['task']):
+                status = pm7_row['task']
 
         elif channel == 'Workon' and not df_workon_indexed.empty and barcode in df_workon_indexed.index:
             workon_row = df_workon_indexed.loc[barcode]
-            # Workon fields are already quite complete in consolidated_df, but ensure they are used if source data has them
-            vendor_name = workon_row.get('name', vendor_name) if pd.notna(workon_row.get('name')) else vendor_name
-            vendor_number = workon_row.get('vendor_number', vendor_number) if pd.notna(workon_row.get('vendor_number')) else vendor_number
-            company_code = workon_row.get('company_code', company_code) if pd.notna(workon_row.get('company_code')) else company_code
-            received_date = workon_row.get('updated', received_date) if pd.notna(workon_row.get('updated')) else received_date
-            processor = 'Jayapal' # Hardcoded
-            channel = 'Workon'    # Hardcoded
-            category = workon_row.get('action', category) if pd.notna(workon_row.get('action')) else category
-            region = workon_row.get('country', region) if pd.notna(workon_row.get('country')) else region
-            status = workon_row.get('status', status) if pd.notna(workon_row.get('status')) else status
-            requester = workon_row.get('applicant', requester) if pd.notna(workon_row.get('applicant')) else requester
-            remarks = workon_row.get('summary', remarks) if pd.notna(workon_row.get('summary')) else remarks
-            allocation_date = today_date_formatted # Hardcoded
-
+            vendor_name = workon_row.get('name')
+            vendor_number = workon_row.get('vendor_number')
+            company_code = workon_row.get('company_code')
+            received_date = workon_row.get('updated')
+            processor = 'Jayapal' 
+            channel = 'Workon'    
+            category = workon_row.get('action')
+            region = workon_row.get('country')
+            status = workon_row.get('status')
+            requester = workon_row.get('applicant')
+            remarks = workon_row.get('summary')
+        
         elif channel == 'RGPA' and not df_rgpa_indexed.empty and barcode in df_rgpa_indexed.index:
             rgpa_row = df_rgpa_indexed.loc[barcode]
-            processor = 'Divya' # Hardcoded
-            channel = 'RGPA'    # Hardcoded
-            company_code = rgpa_row.get('company_code', company_code) if pd.notna(rgpa_row.get('company_code')) else company_code
-            received_date = rgpa_row.get('updated', received_date) if pd.notna(rgpa_row.get('updated')) else received_date
-            remarks = rgpa_row.get('summary', remarks) if pd.notna(rgpa_row.get('summary')) else remarks
-            allocation_date = today_date_formatted # Hardcoded
-
+            processor = 'Divya' 
+            channel = 'RGPA'    
+            company_code = rgpa_row.get('company_code')
+            received_date = rgpa_row.get('updated')
+            remarks = rgpa_row.get('summary')
+            
 
         new_central_row_data = {
             'Barcode': barcode,
@@ -526,10 +529,10 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
             'Region': region if region is not None else '', 
             'Vendor number': vendor_number if vendor_number is not None else '',
             'Vendor Name': vendor_name if vendor_name is not None else '',
-            'Status': status if status is not None else 'New', # Default to 'New' if still None
+            'Status': status if status is not None else 'New', 
             'Received Date': received_date, 
             'Re-Open Date': None,
-            'Allocation Date': allocation_date, # Use the potentially updated allocation_date
+            'Allocation Date': today_date_formatted, 
             'Clarification Date': None,
             'Completion Date': None,
             'Requester': requester if requester is not None else '',
@@ -613,13 +616,21 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
             if 'Company code' in df_final_central.columns:
                 df_final_central['Company code_lookup'] = df_final_central['Company code'].astype(str).str.strip().str.upper().str[:4]
                 
+                # Apply the map. This creates a Series of new regions or NaNs.
                 new_mapped_regions = df_final_central['Company code_lookup'].map(region_map)
 
+                # Ensure 'Region' column exists, if not, create it as empty strings
                 if 'Region' not in df_final_central.columns:
                     df_final_central['Region'] = ''
                 
+                # Replace empty strings in 'Region' with actual pd.NA for consistent filling
                 df_final_central['Region'] = df_final_central['Region'].replace('', pd.NA) 
+
+                # Only fill NaNs in 'Region' with values from 'new_mapped_regions'
+                # This ensures existing, non-NaN 'Region' values are preserved.
                 df_final_central['Region'] = df_final_central['Region'].fillna(new_mapped_regions)
+
+                # Ensure all regions are strings and fill any remaining NaNs (if no mapping was found) with empty strings
                 df_final_central['Region'] = df_final_central['Region'].astype(str).replace('nan', '')
                 
                 df_final_central = df_final_central.drop(columns=['Company code_lookup'])
@@ -628,7 +639,7 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
                 print("Warning: 'Company code' column not found in final central DataFrame. Cannot apply region mapping.")
                 if 'Region' not in df_final_central.columns:
                     df_final_central['Region'] = ''
-                df_final_central['Region'] = df_final_central['Region'].fillna('')
+                df_final_central['Region'] = df_final_central['Region'].fillna('') # Ensure it's filled even if no mapping happens
 
 
     date_cols_in_central_file = [
@@ -676,8 +687,9 @@ def process_files():
 
     # Use os.path.join for robustness across OS
     REGION_MAPPING_FILE_PATH = os.path.join(BASE_DIR, 'company_code_region_mapping.xlsx') 
-    # ^^^ IMPORTANT: Check this path. If 'company_code_region_mapping.xlsx' is in a 'data' folder
-    # next to app.py, it would be: os.path.join(BASE_DIR, 'data', 'company_code_region_mapping.xlsx')
+    # ^^^ IMPORTANT: Changed path. Assuming company_code_region_mapping.xlsx is in the same directory as app.py.
+    # If it's in a 'data' folder next to app.py, it would be:
+    # REGION_MAPPING_FILE_PATH = os.path.join(BASE_DIR, 'data', 'company_code_region_mapping.xlsx')
 
 
     try:
