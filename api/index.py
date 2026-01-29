@@ -11,9 +11,11 @@ from werkzeug.utils import secure_filename
 warnings.filterwarnings('ignore')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-template_dir = os.path.join(BASE_DIR, 'templates') # Corrected: Assuming templates is in the same dir as app.py
+template_dir = os.path.join(BASE_DIR, '..', 'templates') # Corrected for Vercel structure
+static_dir = os.path.join(BASE_DIR, '..', 'static')     # Added for Vercel structure
 
-app = Flask(__name__, template_folder=template_dir)
+# Pass static_folder to the Flask constructor
+app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'default_secret_key_for_local_dev_only')
 
 # --- Global Variables ---
