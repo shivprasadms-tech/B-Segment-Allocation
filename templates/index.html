@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Allocation Application</title>
     <style>
-        /* Basic CSS for better readability - Using white, black, light grey, dark blue, light blue */
         body {
             font-family: Arial, sans-serif;
             background-color: #f6f2f2; /* Light grey */
@@ -35,6 +34,14 @@
             color: #2c3e50; /* Dark blue */
             text-align: center;
             margin-bottom: 30px;
+        }
+        h2 { /* Style for new process titles */
+            color: #0056b3; /* Light blue */
+            text-align: center;
+            margin-top: 30px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
         }
         .form-group {
             margin-bottom: 15px;
@@ -67,6 +74,7 @@
             font-size: 1.1em;
             width: 100%;
             transition: background-color 0.3s ease;
+            margin-top: 20px; /* Added spacing for buttons */
         }
         button:hover {
             background-color: #003d80; /* Slightly darker blue on hover */
@@ -85,7 +93,6 @@
             font-weight: bold;
             text-align: left; /* Align flash message text to left */
         }
-        /* Using shades of blue for info/success, and a distinct red for error */
         .flash-messages li.error {
             background-color: #f8d7da; /* Light red */
             color: #721c24; /* Dark red */
@@ -105,7 +112,7 @@
             margin-top: 20px;
             text-align: center;
         }
-        .download-links h2 {
+        .download-links h3 { /* Changed from h2 to h3 for download titles */
             color: #2c3e50; /* Dark blue */
             margin-bottom: 10px;
         }
@@ -124,7 +131,7 @@
             transition: background-color 0.3s ease;
         }
         .download-links a:hover {
-            background-color: #0056b3; /* Darker blue on hover */
+            background-color: #003d80; /* Darker blue on hover */
         }
  
         /* Styles for the Modal (Rules Popup) */
@@ -177,6 +184,12 @@
             text-align: left;
             margin-bottom: 20px;
         }
+        .modal-content h3 { /* New style for sub-headings in modal */
+            color: #0056b3;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            text-align: left;
+        }
         .modal-content ul {
             list-style-type: decimal;
             text-align: left;
@@ -224,10 +237,8 @@
 </head>
 <body>
     <div class="container">
-        <!-- Bosch Image.png added here -->
-        <!-- Make sure the filename is correct based on what you have in static/images/ -->
-        <img src="/static/images/Bosch.png" alt="Bosch Logo" class="logo"> <!-- Corrected path for static images -->
-        <h1>B-SEGMENT ALLOCATION</h1>
+        <img src="/static/images/Bosch.png" alt="Bosch Logo" class="logo">
+        <h1>Allocation & Lookup Application</h1>
  
         <div class="rules-link">
             <a href="#" id="openRulesModal">View Rules & Instructions</a>
@@ -242,8 +253,10 @@
                 </ul>
             {% endif %}
         {% endwith %}
- 
-        <form action="/process" method="post" enctype="multipart/form-data">
+
+        <!-- B-Segment Allocation Section -->
+        <h2>B-Segment Allocation</h2>
+        <form action="{{ url_for('route_process_b_segment_allocation') }}" method="post" enctype="multipart/form-data">
             <div class="form-group">
                 <label for="pisa_file">Upload PISA Excel File (.xlsx):</label>
                 <input type="file" name="pisa_file" id="pisa_file" accept=".xlsx" required>
@@ -256,36 +269,52 @@
                 <label for="pm7_file">Upload PM7 Excel File (.xlsx):</label>
                 <input type="file" name="pm7_file" id="pm7_file" accept=".xlsx" required>
             </div>
-            {# NEW CHANGE: Make Workon P71 file input optional #}
             <div class="form-group">
                 <label for="workon_file">Upload Workon P71 Excel File (.xlsx) (Optional):</label>
-                <input type="file" name="workon_file" id="workon_file" accept=".xlsx"> {# Removed 'required' #}
+                <input type="file" name="workon_file" id="workon_file" accept=".xlsx">
             </div>
-            {# END NEW CHANGE #}
-            {# NEW CHANGE: Add RGPA file input field (required) #}
             <div class="form-group">
                 <label for="rgpa_file">Upload RGPA Excel File (.xlsx):</label>
                 <input type="file" name="rgpa_file" id="rgpa_file" accept=".xlsx" required>
             </div>
-            {# END NEW CHANGE #}
-            {# NEW CHANGE: Add SMD file input field (optional) #}
             <div class="form-group">
                 <label for="smd_file">Upload SMD Excel File (.xlsx) (Optional):</label>
-                <input type="file" name="smd_file" id="smd_file" accept=".xlsx"> 
+                <input type="file" name="smd_file" id="smd_file" accept=".xlsx">
             </div>
-            {# END NEW CHANGE #}
             <div class="form-group">
-                <label for="central_file">Upload Central Excel File (.xlsx):</label>
-                <input type="file" name="central_file" id="central_file" accept=".xlsx" required>
+                <label for="b_segment_central_file">Upload B-Segment Central Excel File (.xlsx):</label>
+                <input type="file" name="b_segment_central_file" id="b_segment_central_file" accept=".xlsx" required>
             </div>
-            <button type="submit">Process Files</button>
+            <button type="submit">Process B-Segment Allocation</button>
         </form>
        
-        {% if central_download_link %}
+        {% if b_segment_download_link %}
             <div class="download-links">
-                <h2>Processing Complete!</h2>
-                <p>Your processed file is ready:</p>
-                <a href="{{ central_download_link }}" download>Download Updated Central File</a>
+                <h3>B-Segment Processing Complete!</h3>
+                <p>Your processed B-Segment file is ready:</p>
+                <a href="{{ b_segment_download_link }}" download>Download Updated B-Segment Central File</a>
+            </div>
+        {% endif %}
+
+        <!-- PMD Lookup Section -->
+        <h2>PMD Lookup</h2>
+        <form action="{{ url_for('route_process_pmd_lookup') }}" method="post" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="pmd_central_file">Upload PMD Central Excel File (.xlsx):</label>
+                <input type="file" name="pmd_central_file" id="pmd_central_file" accept=".xlsx" required>
+            </div>
+            <div class="form-group">
+                <label for="pmd_lookup_file">Upload PMD Dump Excel File (.xlsx):</label>
+                <input type="file" name="pmd_lookup_file" id="pmd_lookup_file" accept=".xlsx" required>
+            </div>
+            <button type="submit">Process PMD Lookup</button>
+        </form>
+
+        {% if pmd_lookup_download_link %}
+            <div class="download-links">
+                <h3>PMD Lookup Processing Complete!</h3>
+                <p>Your processed PMD Lookup file is ready:</p>
+                <a href="{{ pmd_lookup_download_link }}" download>Download PMD Lookup Result File</a>
             </div>
         {% endif %}
     </div>
@@ -295,11 +324,13 @@
         <div class="modal-content">
             <span class="close-button">&times;</span>
             <h2>Allocation Application Rules & Guidelines</h2>
+
+            <h3>B-Segment Allocation Rules</h3>
             <ul>
                 <li>All uploaded files <strong>must be in .xlsx format</strong>.</li>
                 <li><strong>Tracker File Download:</strong> Download the tracker file when nobody is actively using it. Navigate to:
                     <strong>Teams channel</strong> &rarr; <strong>General</strong> &rarr; <strong>Files</strong> &rarr; <strong>PBI_Database</strong> &rarr; <strong>B-Segment</strong> &rarr; <code>New B_Segment(yesterday's date).xlsx</code></li>
-                <li><strong>Tracker File Columns:</strong> Ensure the tracker file (Central File) contains the following columns with <strong>exact naming</strong> (case-sensitive and including spaces):<br>
+                <li><strong>Tracker File Columns:</strong> Ensure the tracker file (B-Segment Central File) contains the following columns with <strong>exact naming</strong> (case-sensitive and including spaces):<br>
                     <code>Barcode</code>, <code>Processor</code>, <code>Channel</code>, <code>Category</code>, <code>Company code</code>, <code>Region</code>, <code>Vendor number</code>, <code>Vendor Name</code>, <code>Status</code>, <code>Received Date</code>, <code>Re-Open Date</code>, <code>Allocation Date</code>, <code>Clarification Date</code>, <code>Completion Date</code>, <code>Requester</code>, <code>Remarks</code>, <code>Aging</code>, <code>Today</code>.<br>
                     <strong>No filters should be applied</strong> in the downloaded tracker file.</li>
                 <li><strong>ESM Mandatory Columns:</strong> After internal processing, the ESM file should contain the following columns:
@@ -325,7 +356,6 @@
                         <li><strong>Received date</strong> (with a space after received, mapped from 'Creation date')</li>
                     </ul>
                 </li>
-                {# NEW CHANGE: Update Workon P71 rules for optionality and new total file count #}
                 <li><strong>Workon P71 Mandatory Columns (Optional):</strong> If provided, the Workon P71 file should contain the following columns:
                     <ul>
                         <li><strong>key</strong> (mapped to Barcode)</li>
@@ -341,8 +371,6 @@
                     </ul>
                     For Workon P71 records, <strong>Processor</strong> will be set to "Jayapal" and <strong>Channel</strong> to "Workon". <strong>Allocation Date</strong> will be today's date. Other date/aging fields will be blank.
                 </li>
-                {# END NEW CHANGE #}
-                {# NEW CHANGE: Add RGPA Mandatory Columns rule #}
                 <li><strong>RGPA Mandatory Columns:</strong> After internal processing, the RGPA file should contain the following columns:
                     <ul>
                         <li><strong>key</strong> (mapped to Barcode)</li>
@@ -354,8 +382,6 @@
                     Records will be filtered where <strong>'Current Assignee'</strong> is "VMD GS OSP-NA (GS/OMD-APAC)".
                     For RGPA records, <strong>Processor</strong> will be set to "Divya" and <strong>Channel</strong> to "RGPA". <strong>Allocation Date</strong> will be today's date. The <strong>Region</strong> will be automatically mapped based on the 'Company code' from the external mapping file. Other fields will be blank.
                 </li>
-                {# END NEW CHANGE #}
-                {# NEW CHANGE: Add SMD Mandatory Columns rule #}
                 <li><strong>SMD Mandatory Columns (Optional):</strong> If provided, the SMD file should contain the following columns:
                     <ul>
                         <li><strong>ekorg</strong> (mapped to Company code)</li>
@@ -367,16 +393,42 @@
                     </ul>
                     For SMD records, <strong>Channel</strong> will be "SMD". <strong>Allocation Date</strong> and <strong>Today</strong> will be today's date. All other fields (including Barcode, Processor, Category, Status, Re-Open Date, Clarification Date, Completion Date, Remarks, Aging) will be blank or empty, as per requirements.
                 </li>
-                {# END NEW CHANGE #}
-                {# NEW CHANGE: Update processing message to include RGPA and SMD #}
-                <li><strong>Processing & Upload:</strong> Upload the ESM, PISA, PM7, RGPA, (optionally Workon P71 and SMD), and Central files. Then, click on the <strong>"Process Files"</strong> button. The new updated tracker file will be automatically downloaded and will be ready for allocation.</li>
-                {# END NEW CHANGE #}
+                <li><strong>Processing & Upload:</strong> Upload the ESM, PISA, PM7, RGPA, (optionally Workon P71 and SMD), and B-Segment Central files. Then, click on the <strong>"Process B-Segment Allocation"</strong> button. The new updated tracker file will be automatically downloaded and will be ready for allocation.</li>
                 <li><strong>Post-Processing Actions:</strong>
                     <ul>
                         <li><strong>Rename & Upload:</strong> Replace the newly downloaded file by renaming it to <code>New B_Segment(DD_MM_YYYY)</code> with <strong>today's date</strong> in the Teams channel.</li>
                         <li><strong>Archive Old File:</strong> Move the <code>New B_Segment(DD_MM_YYYY)</code> with <strong>yesterday's date</strong> into the <strong><code>Old Data (Do not Modify)</code> folder</strong>.</li>
                     </ul>
                 </li>
+            </ul>
+
+            <h3>PMD Lookup Rules</h3>
+            <ul>
+                <li>Both the <strong>PMD Central Excel File</strong> and the <strong>PMD Dump Excel File</strong> must be provided and in <strong>.xlsx format</strong>.</li>
+                <li><strong>PMD Central File Mandatory Columns:</strong> Ensure the PMD Central file contains these columns with <strong>exact naming</strong> (case-sensitive and including spaces):
+                    <ul>
+                        <li><code>Valid From</code></li>
+                        <li><code>Supplier Name</code></li>
+                        <li><code>Status</code></li>
+                        <li><code>Assigned</code></li>
+                    </ul>
+                </li>
+                <li><strong>PMD Dump File Mandatory Columns:</strong> Ensure the PMD Dump file contains these columns with <strong>exact naming</strong>:
+                    <ul>
+                        <li><code>Valid From</code></li>
+                        <li><code>Supplier Name</code></li>
+                        <li>Optionally, other columns like <code>Bukr.</code>, <code>Type</code>, <code>EBSNO</code>, <code>Street</code>, <code>City</code>, <code>Country</code>, <code>Zip Code</code>, <code>Requested By</code>, <code>Pur. approver</code>, <code>Pur. release date</code> will be included in the output if present.</li>
+                    </ul>
+                </li>
+                <li><strong>Processing Logic:</strong>
+                    <ul>
+                        <li>Records from the PMD Dump file are matched against the PMD Central file using a combination of <strong><code>Valid From</code> date and <code>Supplier Name</code></strong>.</li>
+                        <li>If a record from the PMD Dump file is <strong>not found</strong> in the PMD Central file, its status will be set to <strong>"New"</strong>.</li>
+                        <li>If a record from the PMD Dump file <strong>is found</strong> in the PMD Central file and its <code>Status</code> in the Central file is <strong>"Approved"</strong> (case-insensitive), this record will be <strong>ignored</strong> and will not appear in the output.</li>
+                        <li>If a record from the PMD Dump file <strong>is found</strong> in the PMD Central file and its <code>Status</code> in the Central file is <strong>anything other than "Approved"</strong>, its status will be set to <strong>"Hold"</strong>, and the <code>Assigned</code> value from the Central file will be used.</li>
+                    </ul>
+                </li>
+                <li><strong>Output:</strong> The output will be an Excel file named <code>PMD_Lookup_Result_DD_MM_YYYY_HHMMSS.xlsx</code> containing only the "New" and "Hold" records, with updated status and assignment where applicable.</li>
             </ul>
         </div>
     </div>
