@@ -478,7 +478,7 @@ def process_central_file_step3_final_merge_and_needs_review(
                 'Category': None,
                 'Company code': str(row.get('ekorg', '')), # Defensive str conversion
                 'Region': str(row.get('material_field', '')), # Defensive str conversion
-                'Vendor number': str(row.get('pmd_sno', '')), # Defensive str conversion
+                'Vendor number': str(row.get('pmd-sno', '')), # Defensive str conversion
                 'Vendor Name': str(row.get('supplier_name', '')), # Defensive str conversion
                 'Status': None,
                 'Received Date': row.get('request_date'),
