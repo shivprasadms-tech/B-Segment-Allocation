@@ -95,7 +95,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7, df_workon, df_rgpa, consol
                 'Company code': row.get('company_code'),
                 'Vendor number': row.get('vendor_number'),
                 'Received Date': row.get('received_date'),
-                'Completion Date': None, 'Status': None , 'Today': today_date, 'Channel': 'PISA',
+                'Completion Date': None, 'Status': row.get('status') , 'Today': today_date, 'Channel': 'PISA',
                 'Vendor Name': row.get('vendor_name'),
                 'Re-Open Date': None, 'Allocation Date': None,
                 'Requester': None, 'Clarification Date': None, 'Aging': None, 'Remarks': None,
