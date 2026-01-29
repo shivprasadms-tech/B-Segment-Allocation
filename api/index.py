@@ -412,9 +412,19 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
     # ### NEW CHANGE: RGPA Lookup
     df_rgpa_indexed = pd.DataFrame()
     if 'key' in df_rgpa_lookup.columns:
-        df_rgpa_lookup['key'] = df_rgpa_lookup['key'].astype(str)
-        df_rgpa_indexed = df_rgpa_lookup.set_index('key')
-        print(f"RGPA lookup indexed by 'key'.")
+        # Filter RGPA lookup data by 'current_assignee' as well, to ensure consistency
+        # when looking up additional details for new records.
+        if 'current_assignee' in df_rgpa_lookup.columns:
+            df_rgpa_lookup_filtered = df_rgpa_lookup[
+                df_rgpa_lookup['current_assignee'].astype(str).str.contains("VMD GS OSP-NA (GS/OMD-APAC)", na=False)
+            ].copy()
+            df_rgpa_lookup_filtered['key'] = df_rgpa_lookup_filtered['key'].astype(str)
+            df_rgpa_indexed = df_rgpa_lookup_filtered.set_index('key')
+            print(f"RGPA lookup (filtered by assignee) indexed by 'key'.")
+        else:
+            print("Warning: 'current_assignee' column not found in RGPA lookup. RGPA lookup is not filtered by assignee.")
+            df_rgpa_lookup['key'] = df_rgpa_lookup['key'].astype(str)
+            df_rgpa_indexed = df_rgpa_lookup.set_index('key')
     else:
         print("Warning: 'key' column not found in cleaned RGPA lookup. Cannot perform RGPA lookups.")
     # ### END NEW CHANGE
@@ -441,6 +451,7 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
         channel = row_consolidated['Channel']
 
         # Initialize with values from consolidated_df
+        # This will contain the already-mapped values from consolidate_data_process
         vendor_name = row_consolidated.get('Vendor Name')
         vendor_number = row_consolidated.get('Vendor number')
         company_code = row_consolidated.get('Company code')
@@ -454,10 +465,17 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
 
 
         # The consolidated_df already has the initial mapping for all channels.
-        # This section is primarily to re-apply any specific logic or pull from original DFs
-        # if the consolidated_df's initial population was incomplete or needed refinement for 'new' records.
+        # This section is primarily to ensure that if a specific channel needs
+        # values pulled from its original DF (e.g., if consolidate_data_process
+        # only populated some fields and more are needed from the source for new records),
+        # this is where it happens.
+        # For Workon and RGPA, the fixed Processor/Channel values and blank fields
+        # are already set during consolidation. We mainly care about company_code,
+        # received_date, and remarks for RGPA to be correctly populated here if not already.
 
         # --- PISA Lookup ---
+        # This is already correctly handled by consolidate_data_process for new records.
+        # This section ensures that for a NEW record coming from PISA, its specific PISA details are used.
         if channel == 'PISA' and not df_pisa_indexed.empty and barcode in df_pisa_indexed.index:
             pisa_row = df_pisa_indexed.loc[barcode]
             if 'vendor_name' in pisa_row.index and pd.notna(pisa_row['vendor_name']):
@@ -503,15 +521,16 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
             if 'task' in pm7_row.index and pd.notna(pm7_row['task']):
                 status = pm7_row['task']
 
-        # --- Workon Lookup (if workon was provided) ---
+        # --- Workon Lookup ---
+        # Fixed values for Processor, Channel, Allocation Date for new records are already in row_consolidated
         elif channel == 'Workon' and not df_workon_indexed.empty and barcode in df_workon_indexed.index:
             workon_row = df_workon_indexed.loc[barcode]
             vendor_name = workon_row.get('name')
             vendor_number = workon_row.get('vendor_number')
             company_code = workon_row.get('company_code')
             received_date = workon_row.get('updated')
-            processor = 'Jayapal'
-            channel = 'Workon'
+            processor = 'Jayapal' # Overwrite from consolidated in case of discrepancy
+            channel = 'Workon'    # Overwrite from consolidated in case of discrepancy
             category = workon_row.get('action')
             region = workon_row.get('country')
             status = workon_row.get('status')
@@ -519,43 +538,38 @@ def process_central_file_step3_final_merge_and_needs_review(consolidated_df, upd
             remarks = workon_row.get('summary')
         
         # ### NEW CHANGE: RGPA Lookup for new records
+        # Fixed values for Processor, Channel, Allocation Date for new records are already in row_consolidated
         elif channel == 'RGPA' and not df_rgpa_indexed.empty and barcode in df_rgpa_indexed.index:
             rgpa_row = df_rgpa_indexed.loc[barcode]
-            # Ensure filtering (current_assignee) is already applied to df_rgpa_original
-            # in consolidate_data_process for correct count.
-            # Here, we just retrieve the already mapped values from consolidate_data_process
-            # as the lookup df_rgpa_indexed would be from the original (unfiltered) RGPA.
-            # To get the values from the *filtered* RGPA:
-            # Re-filter df_rgpa_original if needed, or rely on consolidated_df being correct.
-            # As consolidated_df is already built from FILTERED RGPA, we can trust `row_consolidated`
-            # and just set the fixed values if needed.
-            processor = 'Divya'
-            channel = 'RGPA'
-            company_code = rgpa_row.get('company_code') # This assumes company_code in original RGPA
-            received_date = rgpa_row.get('updated') # This assumes updated in original RGPA
-            remarks = rgpa_row.get('summary') # This assumes summary in original RGPA
-            # Other fields (Category, Vendor No, Vendor Name, Status, Requester, Region, Aging) are blank/auto-mapped as per requirements.
+            processor = 'Divya' # Overwrite from consolidated in case of discrepancy
+            channel = 'RGPA'    # Overwrite from consolidated in case of discrepancy
+            company_code = rgpa_row.get('company_code')
+            received_date = rgpa_row.get('updated')
+            remarks = rgpa_row.get('summary')
+            # Other fields like category, vendor_number, vendor_name, status, requester, aging are designed to be blank.
+            # Region will be mapped by external file based on company code.
         # ### END NEW CHANGE
 
-        new_central_row_data = row_consolidated.to_dict() # Start with what's in consolidated_df
-        # Then explicitly set/override with the final determined values for new records
-        new_central_row_data['Vendor Name'] = vendor_name if vendor_name is not None else ''
-        new_central_row_data['Vendor number'] = vendor_number if vendor_number is not None else ''
-        new_central_row_data['Company code'] = company_code if company_code is not None else ''
-        new_central_row_data['Received Date'] = received_date # This would be already formatted as MM/DD/YYYY from consolidate_data_process
-        new_central_row_data['Status'] = status if status is not None else 'New' # Default to New if not set by source
-        new_central_row_data['Allocation Date'] = today_date_formatted # Always today for new records
-        new_central_row_data['Processor'] = processor if processor is not None else ''
-        new_central_row_data['Category'] = category if category is not None else ''
-        new_central_row_data['Requester'] = requester if requester is not None else ''
-        new_central_row_data['Remarks'] = remarks if remarks is not None else ''
-        new_central_row_data['Region'] = region if region is not None else '' # Keep any region already set by Workon if applicable
-        new_central_row_data['Re-Open Date'] = None
-        new_central_row_data['Clarification Date'] = None
-        new_central_row_data['Completion Date'] = None
-        new_central_row_data['Aging'] = None
-        new_central_row_data['Today'] = today_date_formatted
-
+        new_central_row_data = {
+            'Barcode': barcode,
+            'Processor': processor if processor is not None else '',
+            'Channel': channel,
+            'Category': category if category is not None else '',
+            'Company code': company_code if company_code is not None else '',
+            'Region': region if region is not None else '', # Preserve any region already set (e.g. from Workon)
+            'Vendor number': vendor_number if vendor_number is not None else '',
+            'Vendor Name': vendor_name if vendor_name is not None else '',
+            'Status': status if status is not None else 'New', # Default to New if not set by source
+            'Received Date': received_date, # This would be already formatted as MM/DD/YYYY from consolidate_data_process
+            'Re-Open Date': None,
+            'Allocation Date': today_date_formatted, # Always today for new records
+            'Clarification Date': None,
+            'Completion Date': None,
+            'Requester': requester if requester is not None else '',
+            'Remarks': remarks if remarks is not None else '',
+            'Aging': None,
+            'Today': today_date_formatted
+        }
 
         all_new_central_rows_data.append(new_central_row_data)
 
@@ -705,11 +719,9 @@ def process_files():
     try:
         # ### NEW CHANGE: Update file_keys for optional Workon, required RGPA
         uploaded_files = {}
-        # Required files
+        
+        # --- Handle required files ---
         required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgpa_file', 'central_file']
-        # Optional files
-        optional_file_keys = ['workon_file']
-
         for key in required_file_keys:
             if key not in request.files or request.files[key].filename == '':
                 flash(f'Missing required file: "{key}". Please upload all required files.', 'error')
@@ -725,7 +737,9 @@ def process_files():
                 flash(f'Invalid file type for "{key}". Please upload an .xlsx file.', 'error')
                 return redirect(url_for('index'))
         
-        for key in optional_file_keys: # ### NEW CHANGE: Handle optional files
+        # --- Handle optional files ---
+        optional_file_keys = ['workon_file']
+        for key in optional_file_keys:
             if key in request.files and request.files[key].filename != '':
                 file = request.files[key]
                 if file.filename.lower().endswith('.xlsx'):
@@ -753,14 +767,14 @@ def process_files():
         df_esm_original = None
         df_pm7_original = None
         df_workon_original = None 
-        df_rgpa_original = None # ### NEW CHANGE: Initialize RGPA DF
-        df_region_mapping = None
+        df_rgpa_original = None 
+        df_region_mapping = pd.DataFrame() # ### FIX: Initialize df_region_mapping here to an empty DataFrame
 
         try:
             df_pisa_original = pd.read_excel(pisa_file_path)
             df_esm_original = pd.read_excel(esm_file_path)
             df_pm7_original = pd.read_excel(pm7_file_path)
-            df_rgpa_original = pd.read_excel(rgpa_file_path) # ### NEW CHANGE: Read RGPA file
+            df_rgpa_original = pd.read_excel(rgpa_file_path) 
             
             # ### NEW CHANGE: Conditionally read Workon file
             if workon_file_path:
@@ -775,8 +789,8 @@ def process_files():
                 print(f"Successfully loaded region mapping file from: {REGION_MAPPING_FILE_PATH}")
             else:
                 flash(f"Error: Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty.", 'warning')
-                df_region_mapping = pd.DataFrame(columns=['R/3 CoCo', 'Region'])
-
+                # df_region_mapping is already initialized to empty DataFrame above, so no need to re-assign.
+        
         except Exception as e:
             flash(f"Error loading one or more input Excel files or the region mapping file: {e}. Please ensure all files are valid .xlsx formats and the mapping file exists.", 'error')
             if os.path.exists(temp_dir):
@@ -790,7 +804,7 @@ def process_files():
         consolidated_output_filename = f'ConsolidatedData_{today_str}.xlsx'
         consolidated_output_file_path = os.path.join(temp_dir, consolidated_output_filename)
         success, result = consolidate_data_process(
-            df_pisa_original, df_esm_original, df_pm7_original, df_workon_original, df_rgpa_original, consolidated_output_file_path # ### NEW CHANGE: Pass RGPA DF
+            df_pisa_original, df_esm_original, df_pm7_original, df_workon_original, df_rgpa_original, consolidated_output_file_path 
         )
 
         if not success:
@@ -818,7 +832,7 @@ def process_files():
         final_central_output_file_path = os.path.join(temp_dir, final_central_output_filename)
         success, message = process_central_file_step3_final_merge_and_needs_review(
             df_consolidated, df_central_updated_existing, final_central_output_file_path,
-            df_pisa_original, df_esm_original, df_pm7_original, df_workon_original, df_rgpa_original, region_mapping_df # ### NEW CHANGE: Pass RGPA DF
+            df_pisa_original, df_esm_original, df_pm7_original, df_workon_original, df_rgpa_original, df_region_mapping 
         )
         if not success:
             flash(f'Central File Processing (Step 3) Error: {message}', 'error')
