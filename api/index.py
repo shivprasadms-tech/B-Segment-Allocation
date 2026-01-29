@@ -840,162 +840,86 @@ def process_pmd_lookup_core(request_files, temp_dir):
     df_central_pmd['supplier_name_key'] = df_central_pmd['supplier_name'].astype(str).str.strip().str.lower()
     df_pmd_dump['supplier_name_key'] = df_pmd_dump['supplier_name'].astype(str).str.strip().str.lower()
 
-    # --- CRITICAL CHANGE: FILTER OUT 'APPROVED' RECORDS FROM CENTRAL FILE FIRST ---
-    initial_central_count = len(df_central_pmd)
-    df_central_pmd = df_central_pmd[
-        df_central_pmd['status'].astype(str).str.strip().str.lower() != 'approved'
-    ].copy()
-    logging.info(f"Removed {initial_central_count - len(df_central_pmd)} 'Approved' records from Central File before lookup processing.")
-    # --- END CRITICAL CHANGE ---
-
-    # Create composite key for central file (after filtering 'approved')
+    # Create composite key for central file for lookup
     df_central_pmd['comp_key'] = df_central_pmd['valid_from_key'] + '__' + df_central_pmd['supplier_name_key']
-
-    # Deduplicate the remaining central records to avoid 'cannot assemble with duplicate keys'
-    # Prioritize 'Hold' over 'New' etc. if multiple non-approved duplicates exist
-    status_order = ['hold', 'new', 'untouched', 'reopen', 'needs review', ''] # Define an order
-    df_central_pmd['status_rank'] = pd.Categorical(
-        df_central_pmd['status'].astype(str).str.strip().str.lower(),
-        categories=status_order,
-        ordered=True
-    )
-    df_central_pmd_deduped = df_central_pmd.sort_values(
-        by=['comp_key', 'status_rank'], ascending=[True, True]
-    ).drop_duplicates(subset=['comp_key'], keep='first').copy()
     
-    df_central_pmd_deduped.drop(columns=['status_rank'], inplace=True)
-    central_lookup = df_central_pmd_deduped.set_index('comp_key') 
+    # Filter central file to only include 'Hold' records for direct lookup and deduplicate
+    # Only records with 'hold' status will be available for matching PMD Dump records
+    df_central_hold_only = df_central_pmd[
+        df_central_pmd['status'].astype(str).str.strip().str.lower() == 'hold'
+    ].copy()
 
-    logging.info(f"Central lookup prepared with {len(central_lookup)} unique non-approved records.")
-    # --- END DEDUPICATION LOGIC ---
+    # Deduplicate `df_central_hold_only` by `comp_key` if there are multiple 'Hold' for the same key.
+    # Keep the first one encountered (or apply a specific prioritization if needed).
+    df_central_hold_only_deduped = df_central_hold_only.drop_duplicates(subset=['comp_key'], keep='first').copy()
+    
+    # Set index for efficient lookup for 'Hold' status matches
+    central_hold_lookup = df_central_hold_only_deduped.set_index('comp_key')
+    
+    logging.info(f"Central file prepared for 'Hold' status lookup with {len(central_hold_lookup)} unique 'Hold' records.")
 
     # Create composite key for dump file
     df_pmd_dump['comp_key'] = df_pmd_dump['valid_from_key'] + '__' + df_pmd_dump['supplier_name_key']
 
-    # --- Step 3 & 4: Core Lookup Logic ---
+    # --- Core Lookup Logic ---
     final_pmd_records = [] # Will hold records from PMD Dump that are 'New' or 'Hold'
 
     for index, row in df_pmd_dump.iterrows():
         dump_comp_key = row['comp_key']
 
-        if dump_comp_key in central_lookup.index:
-            # Match found in `central_lookup` (which now *only* contains non-approved records)
-            central_record = central_lookup.loc[dump_comp_key]
-            central_status = str(central_record['status']).strip().lower()
-
-            # If it matches a non-approved central record, it becomes 'Hold'
-            # Note: We don't need to check for 'approved' status here anymore because they were already filtered out.
+        if dump_comp_key in central_hold_lookup.index:
+            # Match found in `central_hold_lookup`, so its status is 'Hold'
+            central_record = central_hold_lookup.loc[dump_comp_key]
+            
             new_record = {k: v for k, v in row.drop(['comp_key', 'valid_from_key', 'supplier_name_key']).items()}
             new_record['Status'] = 'Hold'
-            new_record['Assigned'] = str(central_record['assigned']).strip() # Get assigned from central
+            new_record['Assigned'] = str(central_record['assigned']).strip() # Get assigned from central 'Hold' record
             final_pmd_records.append(new_record)
-            logging.debug(f"PMD Dump record {dump_comp_key} set to 'Hold' (matched non-approved central record).")
+            logging.debug(f"PMD Dump record {dump_comp_key} set to 'Hold' (matched central 'Hold' record).")
         else:
-            # No match found in central_lookup. This means either:
+            # No match found in central_hold_lookup. This means either:
             # 1. It's a truly new record (not in central at all).
-            # 2. It *was* in the central file, but its status was 'Approved' (and thus removed).
-            #    Per your requirement "if both the columns values are same in the central file's 'Valid From' and 'Supplier Name' ignore it."
-            #    This implies that if a dump record matches *any* central record (approved or not), it shouldn't become 'New'.
-            #    So, we need a way to check against the *full* central file to decide if it's truly 'New' or if it should be ignored.
-            #    The easiest way to do this is to check against the df_central_pmd_original BEFORE filtering 'Approved'.
+            # 2. It matched a central record with a status other than 'Hold' (e.g., 'Approved', 'New').
+            # According to the clarified logic: "if there is no match then make the status as new"
+            # This implies if it doesn't match an *already 'Hold'* record in central, it's 'New'.
 
-            # Re-create a temp lookup using the full central file (before filtering 'Approved')
-            # This is to check for *any* match for the purpose of deciding 'New' or 'Ignore'.
-            full_central_df_temp = df_central_pmd_original.copy()
-            full_central_df_temp.columns = [clean_column_names(pd.DataFrame(columns=[col])).columns[0] for col in full_central_df_temp.columns]
-            full_central_df_temp['valid_from_key'] = pd.to_datetime(full_central_df_temp['valid_from'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
-            full_central_df_temp['supplier_name_key'] = full_central_df_temp['supplier_name'].astype(str).str.strip().str.lower()
-            full_central_df_temp['comp_key'] = full_central_df_temp['valid_from_key'] + '__' + full_central_df_temp['supplier_name_key']
-            
-            # Use a set for faster lookup for presence
-            full_central_comp_keys = set(full_central_df_temp['comp_key'].unique())
+            new_record = {k: v for k, v in row.drop(['comp_key', 'valid_from_key', 'supplier_name_key']).items()}
+            new_record['Status'] = 'New'
+            new_record['Assigned'] = '' # No assigned for 'New' records
+            final_pmd_records.append(new_record)
+            logging.debug(f"PMD Dump record {dump_comp_key} set to 'New' (no match in central 'Hold' records).")
 
-            if dump_comp_key in full_central_comp_keys:
-                # This means it matched an 'Approved' central record (since it wasn't in central_lookup)
-                # So, IGNORE it as per your point 5 ("if both the columns values are same ... ignore it")
-                logging.debug(f"PMD Dump record {dump_comp_key} ignored (matched an 'Approved' central record).")
-                continue # Skip this record
-            else:
-                # Truly no match in the entire central file, so it's 'New'
-                new_record = {k: v for k, v in row.drop(['comp_key', 'valid_from_key', 'supplier_name_key']).items()}
-                new_record['Status'] = 'New'
-                new_record['Assigned'] = '' # No assigned for 'New' records
-                final_pmd_records.append(new_record)
-                logging.debug(f"PMD Dump record {dump_comp_key} set to 'New' (no match in full central).")
-
-
-    df_output_from_dump = pd.DataFrame(final_pmd_records)
-
-    # --- Step 5: Append "Hold" Status Records from Central File ---
-    # These are records from the *original* central file that had status 'Hold'.
-    df_central_hold_records_original_unfiltered = df_central_pmd_original.copy()
-    df_central_hold_records_original_unfiltered.columns = [clean_column_names(pd.DataFrame(columns=[col])).columns[0] for col in df_central_hold_records_original_unfiltered.columns]
-
-    df_central_hold_for_output = pd.DataFrame(columns=PMD_OUTPUT_COLUMNS) # Initialize empty with target columns
-
-    if 'status' in df_central_hold_records_original_unfiltered.columns:
-        # Filter for 'Hold' status directly from the original central file
-        df_central_hold_raw = df_central_hold_records_original_unfiltered[
-            df_central_hold_records_original_unfiltered['status'].astype(str).str.strip().str.lower() == 'hold'
-        ].copy()
-
-        if not df_central_hold_raw.empty:
-            logging.info(f"Found {len(df_central_hold_raw)} 'Hold' records in Central File to append.")
-            
-            hold_records_list = []
-            for idx, row in df_central_hold_raw.iterrows():
-                processed_row = {}
-                for output_col in PMD_OUTPUT_COLUMNS:
-                    cleaned_output_col_name = clean_column_names(pd.DataFrame(columns=[output_col])).columns[0]
-                    if cleaned_output_col_name in row.index:
-                        processed_row[output_col] = row[cleaned_output_col_name]
-                    elif output_col == 'Status':
-                        processed_row[output_col] = 'Hold'
-                    elif output_col == 'Assigned':
-                         processed_row[output_col] = row.get('assigned', '') # Use cleaned 'assigned' column from central
-                    else:
-                        processed_row[output_col] = '' # Default for missing columns in output schema
-
-                hold_records_list.append(processed_row)
-
-            df_central_hold_for_output = pd.DataFrame(hold_records_list, columns=PMD_OUTPUT_COLUMNS)
-            
-            # Now, combine the dataframes
-            df_output = pd.concat([df_output_from_dump, df_central_hold_for_output], ignore_index=True)
-            logging.info(f"Appended {len(df_central_hold_for_output)} 'Hold' records from the Central File.")
-        else:
-            logging.info("No 'Hold' records found in Central File to append.")
-    else:
-        logging.warning("Central File does not contain a 'status' column to identify 'Hold' records.")
-    
-    # Ensure an empty DF with correct columns if no records were produced at all
-    if df_output_from_dump.empty and df_central_hold_for_output.empty:
-        df_output = pd.DataFrame(columns=PMD_OUTPUT_COLUMNS) # Ensure an empty DF with correct columns
-    elif df_output_from_dump.empty and not df_central_hold_for_output.empty:
-        df_output = df_central_hold_for_output.copy() # Only central hold records
-    elif not df_output_from_dump.empty and df_central_hold_for_output.empty:
-        df_output = df_output_from_dump.copy() # Only dump records
+    df_output = pd.DataFrame(final_pmd_records) # This df now contains all 'New' and 'Hold' records derived from PMD Dump.
 
     # --- Final formatting and column reordering for output ---
     if not df_output.empty:
-        # Before renaming back, ensure 'Valid From' is in a datetime format for proper formatting
-        if 'Valid From' in df_output.columns:
-            df_output['Valid From'] = pd.to_datetime(df_output['Valid From'], errors='coerce')
+        # Map cleaned dump column names back to original for the PMD_OUTPUT_COLUMNS
+        # Create a mapping from cleaned column names to desired output column names
+        cleaned_to_output_map = {clean_column_names(pd.DataFrame(columns=[col])).columns[0]: col for col in PMD_OUTPUT_COLUMNS}
+        
+        # Rename columns in df_output using this map
+        # Only rename columns that actually exist in df_output AND have a mapping
+        cols_to_rename_back = {cleaned_col: original_output_col for cleaned_col, original_output_col in cleaned_to_output_map.items() if cleaned_col in df_output.columns and original_output_col not in ['Status', 'Assigned']}
+        df_output.rename(columns=cols_to_rename_back, inplace=True)
 
-        # Apply final string formatting and fillna for all output columns
+        # Ensure 'Valid From' is formatted to MM/DD/YYYY
+        if 'Valid From' in df_output.columns:
+            df_output['Valid From'] = format_date_to_mdyyyy(df_output['Valid From'])
+        
+        # Add any missing output columns and reorder
         for col in PMD_OUTPUT_COLUMNS:
             if col not in df_output.columns:
-                df_output[col] = '' # Add missing columns
-
-            if col == 'Valid From':
-                df_output[col] = format_date_to_mdyyyy(df_output[col])
-            elif df_output[col].dtype == 'object':
+                df_output[col] = '' # Add missing columns as empty string
+            
+            # Ensure all object columns are handled (fillna with empty string)
+            if df_output[col].dtype == 'object':
                 df_output[col] = df_output[col].fillna('')
-            # Explicitly ensure Status and Assigned are strings
-            elif col in ['Status', 'Assigned']:
-                 df_output[col] = df_output[col].astype(str).fillna('')
-        
-        df_output = df_output[PMD_OUTPUT_COLUMNS] # Final reorder
+
+        # Final reorder of columns
+        df_output = df_output[PMD_OUTPUT_COLUMNS]
+    else:
+        # If df_output is empty, ensure it still has the correct columns for an empty output file
+        df_output = pd.DataFrame(columns=PMD_OUTPUT_COLUMNS)
 
     today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
     pmd_output_filename = f'PMD_Lookup_Result_{today_str}.xlsx'
