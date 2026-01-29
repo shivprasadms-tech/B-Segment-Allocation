@@ -22,8 +22,6 @@ static_dir = os.path.join(BASE_DIR, '..', 'static')     # This would point to 'y
 
 app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
-# Pass static_folder to the Flask constructor
-app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a_strong_default_secret_key_for_local_dev_only_change_this_in_production')
 
 # --- Global Variables ---
