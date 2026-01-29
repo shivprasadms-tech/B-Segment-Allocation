@@ -637,150 +637,16 @@ def process_central_file_step3_final_merge_and_needs_review(
     return True, "Central file processing (Step 3) successful"
 
 
-# --- B-Segment Allocation Processing Function ---
-def process_b_segment_allocation_core(request_files, temp_dir):
-    """Encapsulates the B-Segment Allocation logic."""
-    logging.info("Starting B-Segment Allocation Process...")
-
-    # CORRECTED PATH FOR REGION MAPPING FILE
-    # Go up one directory from BASE_DIR (which is 'api/') to get to the project root
-    PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..')) # Use abspath for clarity
-    REGION_MAPPING_FILE_PATH = os.path.join(PROJECT_ROOT, 'company_code_region_mapping.xlsx')
-
-    uploaded_files = {}
-
-    # --- Handle required files ---
-    required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgpa_file', 'b_segment_central_file']
-    for key in required_file_keys:
-        file = request_files.get(key)
-        if not file or file.filename == '':
-            return False, f'Missing required file: "{key}". Please upload all required files.', None
-        if allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            file_path = os.path.join(temp_dir, filename)
-            file.save(file_path)
-            uploaded_files[key] = file_path
-            flash(f'File "{filename}" uploaded successfully.', 'info')
-        else:
-            return False, f'Invalid file type for "{key}". Please upload an .xlsx file.', None
-
-    # --- Handle optional files ---
-    optional_file_keys = ['workon_file', 'smd_file']
-    for key in optional_file_keys:
-        file = request_files.get(key)
-        if file and file.filename != '':
-            if allowed_file(file.filename):
-                filename = secure_filename(file.filename)
-                file_path = os.path.join(temp_dir, filename)
-                file.save(file_path)
-                uploaded_files[key] = file_path
-                flash(f'Optional file "{filename}" uploaded successfully.', 'info')
-            else:
-                flash(f'Invalid file type for optional file "{key}". It must be an .xlsx file.', 'warning')
-                uploaded_files[key] = None # Set to None if invalid
-        else:
-            logging.info(f'Optional file "{key}" not provided. Continuing without it.')
-            uploaded_files[key] = None # Set to None if not provided
-
-    pisa_file_path = uploaded_files['pisa_file']
-    esm_file_path = uploaded_files['esm_file']
-    pm7_file_path = uploaded_files['pm7_file']
-    workon_file_path = uploaded_files['workon_file'] # This will be path or None
-    rgba_file_path = uploaded_files['rgpa_file'] # !!! CORRECTED: Retrieve 'rgpa_file' from uploaded_files !!!
-    smd_file_path = uploaded_files['smd_file'] # This will be path or None
-    initial_central_file_input_path = uploaded_files['b_segment_central_file']
-
-    df_pisa_original = None
-    df_esm_original = None
-    df_pm7_original = None
-    df_workon_original = pd.DataFrame() # Initialize as empty DataFrame
-    df_rgba_original = None
-    df_smd_original = pd.DataFrame() # Initialize as empty DataFrame
-    df_region_mapping = pd.DataFrame()
-
-    try:
-        df_pisa_original = pd.read_excel(pisa_file_path)
-        df_esm_original = pd.read_excel(esm_file_path)
-        df_pm7_original = pd.read_excel(pm7_file_path)
-        df_rgba_original = pd.read_excel(rgba_file_path) # Uses the corrected rgba_file_path
-
-        # Handle optional files: check if path exists before reading
-        if workon_file_path and os.path.exists(workon_file_path):
-            df_workon_original = pd.read_excel(workon_file_path)
-        else:
-            logging.info("Workon P71 file not loaded (not provided, invalid, or empty).")
-
-        if smd_file_path and os.path.exists(smd_file_path):
-            df_smd_original = pd.read_excel(smd_file_path)
-        else:
-            logging.info("SMD file not loaded (not provided, invalid, or empty).")
-
-        if os.path.exists(REGION_MAPPING_FILE_PATH):
-            df_region_mapping = pd.read_excel(REGION_MAPPING_FILE_PATH)
-            logging.info(f"Successfully loaded region mapping file from: {REGION_MAPPING_FILE_PATH}")
-        else:
-            flash(f"Warning: Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty for records relying solely on this mapping.", 'warning')
-            logging.warning(f"Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty for records relying solely on this mapping.")
-
-
-    except Exception as e:
-        return False, f"Error loading one or more input Excel files: {e}. Please ensure all files are valid .xlsx formats.", None
-
-    today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
-
-    # --- Step 1: Consolidate Data (PISA, ESM, PM7 only) ---
-    df_consolidated_pisa_esm_pm7 = consolidate_data_process(
-        df_pisa_original, df_esm_original, df_pm7_original
-    )
-
-    # Check if df_consolidated_pisa_esm_pm7 is valid for subsequent steps
-    if df_consolidated_pisa_esm_pm7.empty and (not df_pisa_original.empty or not df_esm_original.empty or not df_pm7_original.empty):
-        logging.warning("Consolidation of PISA/ESM/PM7 files resulted in no data, but input files were provided. Check logs for potential filtering or column errors.")
-        flash("Warning: PISA/ESM/PM7 consolidation yielded no records. Check if input files were empty or if data was filtered out.", 'warning')
-    elif not df_consolidated_pisa_esm_pm7.empty:
-        flash('Primary data consolidation from PISA, ESM, PM7 completed successfully!', 'success')
-        # Consolidated output file saving is optional, commented out as it's an intermediate
-        # consolidated_output_filename = f'ConsolidatedData_PISA_ESM_PM7_{today_str}.xlsx'
-        # consolidated_output_file_path = os.path.join(temp_dir, consolidated_output_filename)
-        # try:
-        #     df_consolidated_pisa_esm_pm7.to_excel(consolidated_output_file_path, index=False)
-        #     logging.info(f"Primary consolidated file saved to: {consolidated_output_file_path}")
-        #     session['consolidated_output_path'] = consolidated_output_file_path
-        # except Exception as e:
-        #     logging.warning(f"Could not save primary consolidated file: {e}")
-
-
-    # --- Step 2: Update existing central file records based on consolidation (PISA, ESM, PM7 only) ---
-    success, result_df = process_central_file_step2_update_existing(
-        df_consolidated_pisa_esm_pm7, initial_central_file_input_path
-    )
-    if not success:
-        return False, f'Central File Processing (Step 2) Error: {result_df}', None
-    df_central_updated_existing = result_df
-
-    # --- Step 3: Final Merge ---
-    final_central_output_filename = f'CentralFile_FinalOutput_{today_str}.xlsx'
-    final_central_output_file_path = os.path.join(temp_dir, final_central_output_filename)
-    success, message = process_central_file_step3_final_merge_and_needs_review(
-        df_consolidated_pisa_esm_pm7, df_central_updated_existing, final_central_output_file_path,
-        df_pisa_original, df_esm_original, df_pm7_original,
-        df_workon_original, df_rgba_original, df_smd_original, df_region_mapping
-    )
-    if not success:
-        return False, f'Central File Processing (Step 3) Error: {message}', None
-    flash('Central file finalized successfully!', 'success')
-    session['central_output_path'] = final_central_output_file_path
-    return True, 'Processing complete', final_central_output_file_path
-
-
 # --- PMD Lookup Processing Function ---
 # (This should also come BEFORE any routes that might call it)
 def process_pmd_lookup_core(request_files, temp_dir):
     """
     Encapsulates the PMD Lookup logic.
     MODIFICATION: 'Valid From' column is now used as raw string, not converted to datetime object.
+    Includes explicit logging about supported file formats.
     """
     logging.info("Starting PMD Lookup Process (revised logic, raw 'Valid From')...")
+    logging.info(f"PMD processing accepts files in .xlsx and .xls formats.") # Added line
 
     uploaded_files = {}
 
@@ -796,7 +662,7 @@ def process_pmd_lookup_core(request_files, temp_dir):
             uploaded_files[key] = file_path
             flash(f'PMD file "{filename}" uploaded successfully.', 'info')
         else:
-            return False, f'Invalid file type for PMD file "{key}". Please upload an .xlsx file.', None
+            return False, f'Invalid file type for PMD file "{key}". Please upload an .xlsx or .xls file.', None # Updated flash message
 
     pmd_central_file_path = uploaded_files['pmd_central_file']
     pmd_lookup_file_path = uploaded_files['pmd_lookup_file']
@@ -810,7 +676,7 @@ def process_pmd_lookup_core(request_files, temp_dir):
 
     except Exception as e:
         logging.error(f"Error loading PMD files: {e}", exc_info=True)
-        return False, f"Error loading one or both PMD Excel files: {e}. Please ensure they are valid .xlsx formats.", None
+        return False, f"Error loading one or both PMD Excel files: {e}. Please ensure they are valid .xlsx or .xls formats, and that 'xlrd' and 'openpyxl' libraries are installed.", None # Updated error message
 
     # --- Validate essential columns for PMD Lookup (on original DFs) ---
     central_required = ['Valid From', 'Supplier Name', 'Status', 'Assigned']
