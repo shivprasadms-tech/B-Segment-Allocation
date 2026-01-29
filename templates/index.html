@@ -226,7 +226,7 @@
     <div class="container">
         <!-- Bosch Image.png added here -->
         <!-- Make sure the filename is correct based on what you have in static/images/ -->
-        <img src="/images/Bosch.png" alt="Bosch Logo" class="logo">
+        <img src="/static/images/Bosch.png" alt="Bosch Logo" class="logo"> <!-- Corrected path for static images -->
         <h1>B-SEGMENT ALLOCATION</h1>
  
         <div class="rules-link">
@@ -266,6 +266,12 @@
             <div class="form-group">
                 <label for="rgpa_file">Upload RGPA Excel File (.xlsx):</label>
                 <input type="file" name="rgpa_file" id="rgpa_file" accept=".xlsx" required>
+            </div>
+            {# END NEW CHANGE #}
+            {# NEW CHANGE: Add SMD file input field (optional) #}
+            <div class="form-group">
+                <label for="smd_file">Upload SMD Excel File (.xlsx) (Optional):</label>
+                <input type="file" name="smd_file" id="smd_file" accept=".xlsx"> 
             </div>
             {# END NEW CHANGE #}
             <div class="form-group">
@@ -349,8 +355,21 @@
                     For RGPA records, <strong>Processor</strong> will be set to "Divya" and <strong>Channel</strong> to "RGPA". <strong>Allocation Date</strong> will be today's date. The <strong>Region</strong> will be automatically mapped based on the 'Company code' from the external mapping file. Other fields will be blank.
                 </li>
                 {# END NEW CHANGE #}
-                {# NEW CHANGE: Update processing message to include RGPA #}
-                <li><strong>Processing & Upload:</strong> Upload the ESM, PISA, PM7, RGPA, (optionally Workon P71), and Central files. Then, click on the <strong>"Process Files"</strong> button. The new updated tracker file will be automatically downloaded and will be ready for allocation.</li>
+                {# NEW CHANGE: Add SMD Mandatory Columns rule #}
+                <li><strong>SMD Mandatory Columns (Optional):</strong> If provided, the SMD file should contain the following columns:
+                    <ul>
+                        <li><strong>ekorg</strong> (mapped to Company code)</li>
+                        <li><strong>material field</strong> (mapped to Region)</li>
+                        <li><strong>PMD-SNO</strong> (mapped to Vendor number)</li>
+                        <li><strong>supplier name</strong> (mapped to Vendor Name)</li>
+                        <li><strong>request date</strong> (mapped to Received Date)</li>
+                        <li><strong>Requested by</strong> (mapped to Requester)</li>
+                    </ul>
+                    For SMD records, <strong>Channel</strong> will be "SMD". <strong>Allocation Date</strong> and <strong>Today</strong> will be today's date. All other fields (including Barcode, Processor, Category, Status, Re-Open Date, Clarification Date, Completion Date, Remarks, Aging) will be blank or empty, as per requirements.
+                </li>
+                {# END NEW CHANGE #}
+                {# NEW CHANGE: Update processing message to include RGPA and SMD #}
+                <li><strong>Processing & Upload:</strong> Upload the ESM, PISA, PM7, RGPA, (optionally Workon P71 and SMD), and Central files. Then, click on the <strong>"Process Files"</strong> button. The new updated tracker file will be automatically downloaded and will be ready for allocation.</li>
                 {# END NEW CHANGE #}
                 <li><strong>Post-Processing Actions:</strong>
                     <ul>
