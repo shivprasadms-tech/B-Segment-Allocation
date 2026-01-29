@@ -12,7 +12,7 @@ import logging
 warnings.filterwarnings('ignore')
 
 # Configure logging to DEBUG level to see all messages
-logging.basicConfig(level=logging.DEBUG, # Changed from INFO to DEBUG
+logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Assuming 'index.py' is in 'api/' and 'templates'/'static' are at the project root
@@ -87,6 +87,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
     allowed_pisa_users = ["Goswami Sonali", "Patil Jayapal Gowd", "Ranganath Chilamakuri","Sridhar Divya","Sunitha S","Varunkumar N"]
     if 'assigned_user' in df_pisa.columns:
         original_pisa_count = len(df_pisa)
+        # Using .copy() after filter to avoid SettingWithCopyWarning later
         df_pisa_filtered = df_pisa[df_pisa['assigned_user'].isin(allowed_pisa_users)].copy()
         logging.info(f"\nPISA file filtered. Original records: {original_pisa_count}, Records after filter: {len(df_pisa_filtered)}")
     else:
@@ -100,15 +101,18 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
         for index, row in df_pisa_filtered.iterrows():
             new_row = {
                 'Barcode': row['barcode'],
-                'Company code': row.get('company_code'),
-                'Vendor number': row.get('vendor_number'),
+                'Company code': str(row.get('company_code', '')), # Defensive str conversion
+                'Vendor number': str(row.get('vendor_number', '')), # Defensive str conversion
                 'Received Date': row.get('received_date'),
-                'Completion Date': None, 'Status': row.get('status') , 'Today': today_date_formatted, 'Channel': 'PISA',
-                'Vendor Name': row.get('vendor_name'),
-                'Re-Open Date': None, 'Allocation Date': today_date_formatted,
+                'Completion Date': None,
+                'Status': str(row.get('status', '')), # Defensive str conversion
+                'Today': today_date_formatted,
+                'Channel': 'PISA',
+                'Vendor Name': str(row.get('vendor_name', '')), # Defensive str conversion
+                'Re-Open Date': None,
+                'Allocation Date': today_date_formatted,
                 'Requester': None, 'Clarification Date': None, 'Aging': None, 'Remarks': None,
-                'Region': None,
-                'Processor': None, 'Category': None
+                'Region': None, 'Processor': None, 'Category': None
             }
             all_consolidated_rows.append(new_row)
         logging.info(f"Collected {len(df_pisa_filtered)} rows from PISA.")
@@ -122,18 +126,18 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
             new_row = {
                 'Barcode': row['barcode'],
                 'Received Date': row.get('received_date'),
-                'Status': row.get('state'),
-                'Requester': row.get('opened_by'),
+                'Status': str(row.get('state', '')), # Defensive str conversion
+                'Requester': str(row.get('opened_by', '')), # Defensive str conversion
                 'Completion Date': row.get('closed') if pd.notna(row.get('closed')) else None,
-                'Re-Open Date': row.get('updated') if (row.get('state') or '').lower() == 'reopened' else None,
-                'Today': today_date_formatted, 'Remarks': row.get('short_description'),
+                'Re-Open Date': row.get('updated') if (str(row.get('state', '')).lower() == 'reopened') else None,
+                'Today': today_date_formatted,
+                'Remarks': str(row.get('short_description', '')), # Defensive str conversion
                 'Channel': 'ESM',
-                'Company code': None,'Vendor Name': None,
-                'Vendor number': None, 'Allocation Date': today_date_formatted,
+                'Company code': None,'Vendor Name': None, # Keep None, will be filled if needed later
+                'Vendor number': None,
+                'Allocation Date': today_date_formatted,
                 'Clarification Date': None, 'Aging': None,
-                'Region': None,
-                'Processor': None,
-                'Category': None
+                'Region': None, 'Processor': None, 'Category': None
             }
             all_consolidated_rows.append(new_row)
         logging.info(f"Collected {len(df_esm)} rows from ESM.")
@@ -147,18 +151,17 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
         for index, row in df_pm7.iterrows():
             new_row = {
                 'Barcode': row['barcode'],
-                'Vendor Name': row.get('vendor_name'),
-                'Vendor number': row.get('vendor_number'),
+                'Vendor Name': str(row.get('vendor_name', '')), # Defensive str conversion
+                'Vendor number': str(row.get('vendor_number', '')), # Defensive str conversion
                 'Received Date': row.get('received_date'),
-                'Status': row.get('task'),
+                'Status': str(row.get('task', '')), # Defensive str conversion
                 'Today': today_date_formatted,
                 'Channel': 'PM7',
-                'Company code': row.get('company_code'),
+                'Company code': str(row.get('company_code', '')), # Defensive str conversion
                 'Re-Open Date': None,
                 'Allocation Date': today_date_formatted, 'Completion Date': None, 'Requester': None,
                 'Clarification Date': None, 'Aging': None,
-                'Region': None,
-                'Processor': None, 'Category': None
+                'Region': None, 'Processor': None, 'Category': None
             }
             all_consolidated_rows.append(new_row)
         logging.info(f"Collected {len(df_pm7)} rows from PM7.")
@@ -169,17 +172,17 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
 
     df_consolidated = pd.DataFrame(all_consolidated_rows)
 
+    # Ensure all required columns are present in the consolidated DF
     for col in CONSOLIDATED_OUTPUT_COLUMNS:
         if col not in df_consolidated.columns:
-            df_consolidated[col] = None
+            df_consolidated[col] = None # Use None initially, will be converted to empty string later if needed
 
     df_consolidated = df_consolidated[CONSOLIDATED_OUTPUT_COLUMNS]
 
-    # Convert known date columns now, so they are consistent for later comparisons
+    # Convert known date columns to datetime objects for consistency
     date_cols_to_process = ['Received Date', 'Re-Open Date', 'Allocation Date', 'Completion Date', 'Clarification Date', 'Today']
     for col in date_cols_to_process:
         if col in df_consolidated.columns:
-            # First, convert to datetime objects, coercing errors to NaT
             df_consolidated[col] = pd.to_datetime(df_consolidated[col], errors='coerce')
 
     # Convert Barcode, Company code, Vendor number to string *before* using in sets or merges
@@ -208,6 +211,11 @@ def process_central_file_step2_update_existing(consolidated_df_pisa_esm_pm7, cen
             df_central_cleaned['barcode'] = df_central_cleaned['barcode'].astype(str).replace('nan', '')
         else:
             return False, "Error: 'barcode' column not found in the central file after cleaning. Cannot update status (Step 2)."
+        
+        # Ensure 'status' column exists for subsequent logic
+        if 'status' not in df_central_cleaned.columns:
+            df_central_cleaned['status'] = '' # Add empty status if missing
+            logging.warning("Warning: 'status' column not found in central file after cleaning. Added empty 'status' column.")
 
         logging.info("Consolidated (DF) and Central (file) loaded successfully for Step 2!")
     except Exception as e:
@@ -217,16 +225,20 @@ def process_central_file_step2_update_existing(consolidated_df_pisa_esm_pm7, cen
         return False, "Error: 'Barcode' column not found in the consolidated (PISA/ESM/PM7) file. Cannot proceed with central file processing (Step 2)."
 
     # Barcodes from consolidated PISA, ESM, PM7 for status change logic
-    consolidated_barcodes_for_status_change_set = set(consolidated_df_pisa_esm_pm7['Barcode'].unique())
+    # Only if consolidated_df_pisa_esm_pm7 is not empty
+    consolidated_barcodes_for_status_change_set = set()
+    if not consolidated_df_pisa_esm_pm7.empty:
+        consolidated_barcodes_for_status_change_set = set(consolidated_df_pisa_esm_pm7['Barcode'].unique())
+    
     logging.info(f"Found {len(consolidated_barcodes_for_status_change_set)} unique barcodes from PISA/ESM/PM7 in consolidated file for Step 2 status updates.")
 
     # Apply the status transformation only for central records whose barcodes exist in the consolidated set
     def transform_status_if_barcode_exists(row):
         central_barcode = str(row['barcode']) # Use the cleaned central barcode column
-        original_central_status = row['status']
+        original_central_status = str(row['status']) # Ensure status is string for comparison
 
         if central_barcode in consolidated_barcodes_for_status_change_set:
-            status_str = str(original_central_status).strip().lower()
+            status_str = original_central_status.strip().lower()
             if status_str == 'new':
                 return 'Untouched'
             elif status_str == 'completed':
@@ -241,7 +253,8 @@ def process_central_file_step2_update_existing(consolidated_df_pisa_esm_pm7, cen
             return original_central_status # If barcode not in consolidated, keep original status for now (Needs Review handled in Step 3)
 
     df_central_cleaned['status'] = df_central_cleaned.apply(transform_status_if_barcode_exists, axis=1)
-    logging.info(f"Applied status transformation logic for existing central file records ({df_central_cleaned['status'].value_counts().sum()} records processed).")
+    logging.info(f"Applied status transformation logic for existing central file records ({len(df_central_cleaned)} records processed).")
+
 
     # Final cleanup and column remapping for the central file part that has been processed
     try:
@@ -274,7 +287,7 @@ def process_central_file_step2_update_existing(consolidated_df_pisa_esm_pm7, cen
         # Ensure all CONSOLIDATED_OUTPUT_COLUMNS are present
         for col in CONSOLIDATED_OUTPUT_COLUMNS:
             if col not in df_central_cleaned.columns:
-                df_central_cleaned[col] = None # Or '' depending on desired default for new columns
+                df_central_cleaned[col] = None # Use None for missing columns initially
 
         # Reorder to match CONSOLIDATED_OUTPUT_COLUMNS structure
         df_central_cleaned = df_central_cleaned[CONSOLIDATED_OUTPUT_COLUMNS]
@@ -310,14 +323,18 @@ def process_central_file_step3_final_merge_and_needs_review(
 
     # Get sets of barcodes for efficient lookup
     central_barcodes_set = set(df_final_central['Barcode'].astype(str).unique())
-    consolidated_pisa_esm_pm7_barcodes_set = set(df_consolidated_pisa_esm_pm7['Barcode'].astype(str).unique())
+
+    # Ensure consolidated_pisa_esm_pm7_barcodes_set is empty if df_consolidated_pisa_esm_pm7 is empty
+    consolidated_pisa_esm_pm7_barcodes_set = set()
+    if not df_consolidated_pisa_esm_pm7.empty:
+        consolidated_pisa_esm_pm7_barcodes_set = set(df_consolidated_pisa_esm_pm7['Barcode'].astype(str).unique())
 
     # --- 1. Add NEW records from PISA/ESM/PM7 to the central file ---
     # These are barcodes in consolidated_pisa_esm_pm7_barcodes_set but NOT in central_barcodes_set
     barcodes_from_pisa_esm_pm7_to_add = consolidated_pisa_esm_pm7_barcodes_set - central_barcodes_set
     logging.info(f"Found {len(barcodes_from_pisa_esm_pm7_to_add)} new barcodes from PISA/ESM/PM7 to add to central. Their status will be 'New'.")
 
-    if not df_consolidated_pisa_esm_pm7.empty:
+    if not df_consolidated_pisa_esm_pm7.empty and not df_consolidated_pisa_esm_pm7.empty: # Second check is redundant but safe
         df_new_records_from_pisa_esm_pm7 = df_consolidated_pisa_esm_pm7[
             df_consolidated_pisa_esm_pm7['Barcode'].isin(barcodes_from_pisa_esm_pm7_to_add)
         ].copy()
@@ -326,9 +343,9 @@ def process_central_file_step3_final_merge_and_needs_review(
             df_final_central = pd.concat([df_final_central, df_new_records_from_pisa_esm_pm7], ignore_index=True)
             logging.info(f"Appended {len(df_new_records_from_pisa_esm_pm7)} new records from PISA/ESM/PM7 with status 'New'.")
         else:
-            logging.info("No new PISA/ESM/PM7 records to append.")
+            logging.info("No new PISA/ESM/PM7 records to append from the consolidated data (all already in central or no new barcodes).")
     else:
-        logging.info("Consolidated PISA/ESM/PM7 DataFrame was empty, no new records to append from it.")
+        logging.info("Consolidated PISA/ESM/PM7 DataFrame was empty, so no new records to append from it.")
 
     logging.debug(f"DEBUG (Step 3): Status distribution after adding new PISA/ESM/PM7 records:\n{df_final_central['Status'].value_counts(dropna=False)}")
 
@@ -357,22 +374,22 @@ def process_central_file_step3_final_merge_and_needs_review(
             workon_records_to_append = []
             for index, row in df_workon_cleaned.iterrows():
                 new_row = {
-                    'Barcode': str(row['key']), # Convert to string
+                    'Barcode': str(row.get('key', '')), # Defensive str conversion
                     'Processor': 'Jayapal',
                     'Channel': 'Workon',
-                    'Category': row.get('action'),
-                    'Company code': row.get('company_code'),
-                    'Region': row.get('country'),
-                    'Vendor number': row.get('vendor_number'),
-                    'Vendor Name': row.get('name'),
-                    'Status': row.get('status'),
+                    'Category': str(row.get('action', '')), # Defensive str conversion
+                    'Company code': str(row.get('company_code', '')), # Defensive str conversion
+                    'Region': str(row.get('country', '')), # Defensive str conversion
+                    'Vendor number': str(row.get('vendor_number', '')), # Defensive str conversion
+                    'Vendor Name': str(row.get('name', '')), # Defensive str conversion
+                    'Status': str(row.get('status', '')), # Defensive str conversion
                     'Received Date': row.get('updated'),
                     'Re-Open Date': None,
                     'Allocation Date': today_date_formatted,
                     'Clarification Date': None,
                     'Completion Date': None,
-                    'Requester': row.get('applicant'),
-                    'Remarks': row.get('summary'),
+                    'Requester': str(row.get('applicant', '')), # Defensive str conversion
+                    'Remarks': str(row.get('summary', '')), # Defensive str conversion
                     'Aging': None,
                     'Today': today_date_formatted
                 }
@@ -418,11 +435,11 @@ def process_central_file_step3_final_merge_and_needs_review(
                     logging.debug(f"Processing RGBA row (sample): Barcode={row.get('key')}, Company_code={row.get('company_code')}, Updated={row.get('updated')}")
 
                 new_row = {
-                    'Barcode': str(row['key']), # Ensure barcode is string
+                    'Barcode': str(row.get('key', '')), # Defensive str conversion
                     'Processor': 'Divya',
                     'Channel': 'Workon', # Confirmed: Channel for RGBA is 'Workon'
                     'Category': None,
-                    'Company code': row.get('company_code'),
+                    'Company code': str(row.get('company_code', '')), # Defensive str conversion
                     'Region': None, # Will be filled by region mapping later if not present
                     'Vendor number': None,
                     'Vendor Name': None,
@@ -433,7 +450,7 @@ def process_central_file_step3_final_merge_and_needs_review(
                     'Clarification Date': None,
                     'Completion Date': None,
                     'Requester': None,
-                    'Remarks': row.get('summary'),
+                    'Remarks': str(row.get('summary', '')), # Defensive str conversion
                     'Aging': None,
                     'Today': today_date_formatted
                 }
@@ -458,17 +475,17 @@ def process_central_file_step3_final_merge_and_needs_review(
                 'Processor': None,
                 'Channel': 'SMD',
                 'Category': None,
-                'Company code': row.get('ekorg'),
-                'Region': row.get('material_field'),
-                'Vendor number': row.get('pmd_sno'),
-                'Vendor Name': row.get('supplier_name'),
+                'Company code': str(row.get('ekorg', '')), # Defensive str conversion
+                'Region': str(row.get('material_field', '')), # Defensive str conversion
+                'Vendor number': str(row.get('pmd_sno', '')), # Defensive str conversion
+                'Vendor Name': str(row.get('supplier_name', '')), # Defensive str conversion
                 'Status': None,
                 'Received Date': row.get('request_date'),
                 'Re-Open Date': None,
                 'Allocation Date': today_date_formatted,
                 'Clarification Date': None,
                 'Completion Date': None,
-                'Requester': row.get('requested_by'),
+                'Requester': str(row.get('requested_by', '')), # Defensive str conversion
                 'Remarks': None,
                 'Aging': None,
                 'Today': today_date_formatted
@@ -492,8 +509,10 @@ def process_central_file_step3_final_merge_and_needs_review(
         pm7_blank_cc_mask = (df_final_central['Channel'] == 'PM7') & \
                             (df_final_central['Company code'].astype(str).replace('nan', '').str.strip() == '')
 
+        # Ensure Barcode is not None/empty before slicing
+        valid_barcodes_for_pm7 = df_final_central.loc[pm7_blank_cc_mask, 'Barcode'].astype(str).str.strip()
         df_final_central.loc[pm7_blank_cc_mask, 'Company code'] = \
-            df_final_central.loc[pm7_blank_cc_mask, 'Barcode'].astype(str).str[:4]
+            valid_barcodes_for_pm7.apply(lambda x: x[:4] if len(x) >= 4 else '')
 
         logging.info(f"Populated Company Code for {pm7_blank_cc_mask.sum()} PM7 records based on Barcode.")
     else:
@@ -525,6 +544,7 @@ def process_central_file_step3_final_merge_and_needs_review(
             logging.info(f"Loaded {len(region_map)} unique R/3 CoCo -> Region mappings.")
 
             if 'Company code' in df_final_central.columns:
+                # Ensure 'Company code' column is string before lookup
                 df_final_central['Company code_lookup'] = df_final_central['Company code'].astype(str).str.strip().str.upper().str[:4]
 
                 new_mapped_regions = df_final_central['Company code_lookup'].map(region_map)
@@ -558,21 +578,18 @@ def process_central_file_step3_final_merge_and_needs_review(
         if col in df_final_central.columns:
             if col in date_cols_in_central_file:
                 df_final_central[col] = format_date_to_mdyyyy(df_final_central[col])
+            # Ensure other object columns are correctly handled as strings/empty strings
             elif df_final_central[col].dtype == 'object':
                 df_final_central[col] = df_final_central[col].fillna('')
-            elif col in ['Barcode', 'Vendor number', 'Company code']:
+            # Barcode, Vendor number, Company code are already handled to str at their source.
+            # This handles any remaining cases that might not have been caught
+            elif col in ['Barcode', 'Vendor number', 'Company code'] and df_final_central[col].dtype != 'object':
                 df_final_central[col] = df_final_central[col].astype(str).replace('nan', '')
         else:
             df_final_central[col] = '' # Ensure all output columns exist, fill missing as empty string
 
-    # Ensure all CONSOLIDATED_OUTPUT_COLUMNS are present in the final DataFrame, ordered correctly
-    # This loop is largely redundant if the reindex before concat and the loop above are thorough,
-    # but it acts as a final safeguard.
-    for col in CONSOLIDATED_OUTPUT_COLUMNS:
-        if col not in df_final_central.columns:
-            df_final_central[col] = '' # Add missing columns as empty strings
-
-    df_final_central = df_final_central[CONSOLIDATED_OUTPUT_COLUMNS] # Reorder columns
+    # Reorder columns to ensure final output matches specification
+    df_final_central = df_final_central[CONSOLIDATED_OUTPUT_COLUMNS]
     logging.debug(f"DEBUG: Final Status column before saving:\n{df_final_central['Status'].value_counts(dropna=False)}")
     logging.debug(f"DEBUG: Final sample rows before saving:\n{df_final_central[['Barcode', 'Channel', 'Status']].head(10)}")
 
@@ -592,7 +609,9 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     """Encapsulates the B-Segment Allocation logic."""
     logging.info("Starting B-Segment Allocation Process...")
 
-    PROJECT_ROOT = os.path.join(BASE_DIR, '..')
+    # CORRECTED PATH FOR REGION MAPPING FILE
+    # Go up one directory from BASE_DIR (which is 'api/') to get to the project root
+    PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..')) # Use abspath for clarity
     REGION_MAPPING_FILE_PATH = os.path.join(PROJECT_ROOT, 'company_code_region_mapping.xlsx')
 
     uploaded_files = {}
@@ -668,6 +687,8 @@ def process_b_segment_allocation_core(request_files, temp_dir):
             logging.info(f"Successfully loaded region mapping file from: {REGION_MAPPING_FILE_PATH}")
         else:
             flash(f"Warning: Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty for records relying solely on this mapping.", 'warning')
+            logging.warning(f"Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty for records relying solely on this mapping.")
+
 
     except Exception as e:
         return False, f"Error loading one or more input Excel files: {e}. Please ensure all files are valid .xlsx formats.", None
