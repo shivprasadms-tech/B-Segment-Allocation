@@ -11,8 +11,8 @@ import logging
 
 warnings.filterwarnings('ignore')
 
-# Configure logging
-logging.basicConfig(level=logging.INFO,
+# Configure logging to DEBUG level to see all messages
+logging.basicConfig(level=logging.DEBUG, # Changed from INFO to DEBUG
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Assuming 'index.py' is in 'api/' and 'templates'/'static' are at the project root
@@ -304,6 +304,10 @@ def process_central_file_step3_final_merge_and_needs_review(
     # --- 1. Add NEW records from PISA/ESM/PM7 to the central file ---
     df_final_central = updated_existing_central_df.copy() # Start with the central file after Step 2 updates
 
+    logging.debug(f"DEBUG: Status column initial state (from updated_existing_central_df):\n{df_final_central['Status'].value_counts(dropna=False)}")
+    logging.debug(f"DEBUG: Sample rows initial state:\n{df_final_central[['Barcode', 'Channel', 'Status']].head()}")
+
+
     central_barcodes_set = set(df_final_central['Barcode'].astype(str).unique())
     consolidated_pisa_esm_pm7_barcodes_set = set(df_consolidated_pisa_esm_pm7['Barcode'].astype(str).unique())
 
@@ -317,6 +321,8 @@ def process_central_file_step3_final_merge_and_needs_review(
     if not df_new_records_from_pisa_esm_pm7.empty:
         df_final_central = pd.concat([df_final_central, df_new_records_from_pisa_esm_pm7], ignore_index=True)
         logging.info(f"Appended {len(df_new_records_from_pisa_esm_pm7)} new records from PISA/ESM/PM7.")
+    logging.debug(f"DEBUG: Status column after adding new PISA/ESM/PM7 records:\n{df_final_central['Status'].value_counts(dropna=False)}")
+    logging.debug(f"DEBUG: Sample rows after adding new PISA/ESM/PM7 records:\n{df_final_central[['Barcode', 'Channel', 'Status']].tail()}")
 
 
     # --- 2. Mark 'Needs Review' for central records not found in PISA/ESM/PM7 consolidated ---
@@ -330,6 +336,8 @@ def process_central_file_step3_final_merge_and_needs_review(
 
     df_final_central.loc[final_needs_review_condition, 'Status'] = 'Needs Review'
     logging.info(f"Updated {final_needs_review_condition.sum()} records to 'Needs Review' where status was not 'Completed'.")
+    logging.debug(f"DEBUG: Status column after 'Needs Review' logic:\n{df_final_central['Status'].value_counts(dropna=False)}")
+    logging.debug(f"DEBUG: Sample rows with 'Needs Review' status:\n{df_final_central[df_final_central['Status'] == 'Needs Review'][['Barcode', 'Channel', 'Status']].head()}")
 
 
     # --- 3. Directly map and append Workon P71 records ---
@@ -371,6 +379,7 @@ def process_central_file_step3_final_merge_and_needs_review(
                 logging.info("No records to append from Workon P71 after mapping.")
     else:
         logging.info("Workon file not provided or is empty. Skipping Workon processing.")
+    logging.debug(f"DEBUG: Status column after Workon append:\n{df_final_central['Status'].value_counts(dropna=False)}")
 
 
     # --- 4. Directly map and append RGBA records ---
@@ -428,6 +437,7 @@ def process_central_file_step3_final_merge_and_needs_review(
                 logging.info(f"Successfully appended {len(df_rgba_appended)} records from RGBA directly.")
             else:
                 logging.info("No records generated from RGBA for appending after individual row processing (might be due to missing keys or unexpected values).")
+    logging.debug(f"DEBUG: Status column after RGBA append:\n{df_final_central['Status'].value_counts(dropna=False)}")
 
 
     # --- 5. Directly map and append SMD records ---
@@ -465,6 +475,7 @@ def process_central_file_step3_final_merge_and_needs_review(
             logging.info("No records to append from SMD after mapping.")
     else:
         logging.info("SMD file not provided or is empty. Skipping SMD processing.")
+    logging.debug(f"DEBUG: Status column after SMD append:\n{df_final_central['Status'].value_counts(dropna=False)}")
 
 
     # --- 6. Handle blank Company Code for PM7 channel (Applies to all PM7 records in df_final_central) ---
@@ -479,6 +490,7 @@ def process_central_file_step3_final_merge_and_needs_review(
         logging.info(f"Populated Company Code for {pm7_blank_cc_mask.sum()} PM7 records based on Barcode.")
     else:
         logging.warning("Warning: 'Channel', 'Company code', or 'Barcode' columns missing. Skipping PM7 Company Code population logic.")
+    logging.debug(f"DEBUG: Status column after PM7 Company Code logic:\n{df_final_central['Status'].value_counts(dropna=False)}")
 
 
     # --- 7. Apply Region Mapping (Applies to all records in df_final_central) ---
@@ -525,6 +537,7 @@ def process_central_file_step3_final_merge_and_needs_review(
                 if 'Region' not in df_final_central.columns:
                     df_final_central['Region'] = ''
                 df_final_central['Region'] = df_final_central['Region'].fillna('')
+    logging.debug(f"DEBUG: Status column after Region Mapping logic:\n{df_final_central['Status'].value_counts(dropna=False)}")
 
 
     # --- 8. Final formatting and save ---
@@ -547,6 +560,9 @@ def process_central_file_step3_final_merge_and_needs_review(
             df_final_central[col] = '' # Add missing columns as empty strings
 
     df_final_central = df_final_central[CONSOLIDATED_OUTPUT_COLUMNS] # Reorder columns
+    logging.debug(f"DEBUG: Final Status column before saving:\n{df_final_central['Status'].value_counts(dropna=False)}")
+    logging.debug(f"DEBUG: Final sample rows before saving:\n{df_final_central[['Barcode', 'Channel', 'Status']].head(10)}")
+
 
     try:
         df_final_central.to_excel(final_central_output_file_path, index=False)
@@ -568,8 +584,6 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     uploaded_files = {}
 
     # --- Handle required files ---
-    # !!! CORRECTED: Changed 'central_file' key to 'b_segment_central_file'
-    # !!! REMINDER: 'rgpa_file' in HTML maps to 'rgba_file_path' in Python for internal use.
     required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgpa_file', 'b_segment_central_file']
     for key in required_file_keys:
         file = request_files.get(key)
@@ -608,7 +622,6 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     workon_file_path = uploaded_files['workon_file'] # This will be path or None
     rgba_file_path = uploaded_files['rgpa_file'] # !!! CORRECTED: Retrieve 'rgpa_file' from uploaded_files !!!
     smd_file_path = uploaded_files['smd_file'] # This will be path or None
-    # !!! CORRECTED: Retrieve 'b_segment_central_file' from uploaded_files !!!
     initial_central_file_input_path = uploaded_files['b_segment_central_file']
 
     df_pisa_original = None
