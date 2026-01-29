@@ -8,6 +8,7 @@ import re
 from flask import Flask, request, render_template, redirect, url_for, send_file, flash, session
 from werkzeug.utils import secure_filename
 import logging
+import io # Added for in-memory file handling
 
 warnings.filterwarnings('ignore')
 
@@ -768,8 +769,11 @@ def process_b_segment_allocation_core(request_files, temp_dir):
 
 
 def process_pmd_lookup_core(request_files, temp_dir):
-    """Encapsulates the PMD Lookup logic."""
-    logging.info("Starting PMD Lookup Process...")
+    """
+    Encapsulates the PMD Lookup logic, modified to align with the provided second snippet.
+    This includes the 'New', 'Hold', and 'Ignore (Approved)' status determination.
+    """
+    logging.info("Starting PMD Lookup Process (revised logic)...")
 
     uploaded_files = {}
 
@@ -792,126 +796,151 @@ def process_pmd_lookup_core(request_files, temp_dir):
     pmd_lookup_file_path = uploaded_files['pmd_lookup_file']
 
     try:
-        # Load and clean PMD Central File
-        # Use keep_default_na=False to prevent empty strings from being read as NaN
+        # Load PMD Central File (using io.BytesIO for consistency, though file_path works too)
+        # Ensure keep_default_na=False to retain empty strings
         df_central_pmd_original = pd.read_excel(pmd_central_file_path, keep_default_na=False)
-        df_central_pmd = clean_column_names(df_central_pmd_original.copy())
-
-        # Load and clean PMD Dump File
+        # Load PMD Dump File
         df_pmd_dump_original = pd.read_excel(pmd_lookup_file_path, keep_default_na=False)
-        df_pmd_dump = clean_column_names(df_pmd_dump_original.copy())
 
-        logging.info("PMD Central and PMD Dump files loaded and cleaned.")
+        logging.info("PMD Central and PMD Dump files loaded.")
 
     except Exception as e:
         return False, f"Error loading one or both PMD Excel files: {e}. Please ensure they are valid .xlsx formats.", None
 
     # --- Validate essential columns for PMD Lookup ---
-    required_central_cols = ['valid_from', 'supplier_name', 'status', 'assigned']
-    for col in required_central_cols:
-        if col not in df_central_pmd.columns:
-            return False, f"Missing required column '{col}' in PMD Central file after cleaning. Please check rules.", None
+    # These are the *original* column names, before cleaning
+    central_required = ['Valid From', 'Supplier Name', 'Status', 'Assigned']
+    pmd_required = ['Valid From', 'Supplier Name']
 
-    required_dump_cols = ['valid_from', 'supplier_name']
-    for col in required_dump_cols:
-        if col not in df_pmd_dump.columns:
-            return False, f"Missing required column '{col}' in PMD Dump file after cleaning. Please check rules.", None
+    for col in central_required:
+        if col not in df_central_pmd_original.columns:
+            return False, f"Missing required column '{col}' in PMD Central file. Please check rules.", None
+
+    for col in pmd_required:
+        if col not in df_pmd_dump_original.columns:
+            return False, f"Missing required column '{col}' in PMD Lookup Data file. Please check rules.", None
+
+    # --- Create copies for processing and clean column names for internal use ---
+    # We clean AFTER validation of original names to avoid confusion.
+    df_central_pmd = df_central_pmd_original.copy()
+    df_pmd_dump = df_pmd_dump_original.copy()
+
+    # Clean column names for internal consistency while preserving original for output if needed
+    df_central_pmd.columns = [clean_column_names(pd.DataFrame(columns=[col])).columns[0] for col in df_central_pmd.columns]
+    df_pmd_dump.columns = [clean_column_names(pd.DataFrame(columns=[col])).columns[0] for col in df_pmd_dump.columns]
+
+    # Map original names to cleaned names for easier access (e.g., 'Valid From' -> 'valid_from')
+    original_to_cleaned_central = {original: cleaned for original, cleaned in zip(df_central_pmd_original.columns, df_central_pmd.columns)}
+    original_to_cleaned_dump = {original: cleaned for original, cleaned in zip(df_pmd_dump_original.columns, df_pmd_dump.columns)}
 
     # --- Pre-processing for lookup keys ---
     # Standardize 'Valid From' dates to a comparable format (e.g., YYYY-MM-DD string)
-    df_central_pmd['valid_from_key'] = pd.to_datetime(df_central_pmd['valid_from'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
-    df_pmd_dump['valid_from_key'] = pd.to_datetime(df_pmd_dump['valid_from'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
+    df_central_pmd['valid_from_dt'] = pd.to_datetime(df_central_pmd[original_to_cleaned_central['Valid From']], errors='coerce')
+    df_pmd_dump['valid_from_dt'] = pd.to_datetime(df_pmd_dump[original_to_cleaned_dump['Valid From']], errors='coerce')
 
-    df_central_pmd['supplier_name_key'] = df_central_pmd['supplier_name'].astype(str).str.strip().str.lower()
-    df_pmd_dump['supplier_name_key'] = df_pmd_dump['supplier_name'].astype(str).str.strip().str.lower()
+    df_central_pmd.dropna(subset=['valid_from_dt', original_to_cleaned_central['Supplier Name']], inplace=True)
+    df_pmd_dump.dropna(subset=['valid_from_dt', original_to_cleaned_dump['Supplier Name']], inplace=True)
+    logging.info("Date columns normalized and rows with missing comparison data dropped for PMD lookup.")
 
-    # Create composite key for central file and set as index for efficient lookup
-    df_central_pmd['comp_key'] = df_central_pmd['valid_from_key'] + '__' + df_central_pmd['supplier_name_key']
-    central_lookup = df_central_pmd.set_index('comp_key')
+    df_central_pmd['comp_key'] = (
+        df_central_pmd['valid_from_dt'].dt.strftime('%Y-%m-%d') + '__' +
+        df_central_pmd[original_to_cleaned_central['Supplier Name']].astype(str).str.strip().str.lower()
+    )
+    df_pmd_dump['comp_key'] = (
+        df_pmd_dump['valid_from_dt'].dt.strftime('%Y-%m-%d') + '__' +
+        df_pmd_dump[original_to_cleaned_dump['Supplier Name']].astype(str).str.strip().str.lower()
+    )
 
-    # Create composite key for dump file
-    df_pmd_dump['comp_key'] = df_pmd_dump['valid_from_key'] + '__' + df_pmd_dump['supplier_name_key']
+    logging.info("Composite keys created for both DataFrames.")
 
-    logging.info("Composite keys created and central file indexed for lookup.")
+    # --- Central Lookup (no join, use set_index for efficiency) ---
+    # Make sure to use the cleaned column names for 'status' and 'assigned'
+    central_lookup = df_central_pmd.set_index('comp_key')[[original_to_cleaned_central['Status'], original_to_cleaned_central['Assigned']]]
+    central_lookup.columns = ['_status_central', '_assigned_central'] # Rename to avoid conflict with new 'Status' column
 
-    # --- Apply the provided logic ---
-    def determine_status(row):
+    # --- Apply the provided logic to determine Status and Assigned ---
+    def determine_status_and_assigned(row):
         dump_comp_key = row['comp_key']
 
         # No match → New
         if dump_comp_key not in central_lookup.index:
-            return 'New', None  # 'Assigned' remains None for new records
+            return 'New', None
 
         central_record = central_lookup.loc[dump_comp_key]
-        central_status = central_record['status'] # Use cleaned column name
-        central_assigned = central_record['assigned'] # Use cleaned column name
+        central_status = str(central_record['_status_central']).strip().lower()
+        central_assigned = central_record['_assigned_central']
 
         # Match + Approved → Ignore (return None for both status and assigned)
-        if isinstance(central_status, str) and central_status.strip().lower() == 'approved':
+        if central_status == 'approved':
             return None, None
 
         # Match + Not Approved → Hold
         return 'Hold', central_assigned
 
     # Apply the status determination
-    df_pmd_dump[['Status_Output', 'Assigned_Output']] = df_pmd_dump.apply(
-        lambda r: determine_status(r),
+    df_pmd_dump[['status', 'assigned']] = df_pmd_dump.apply(
+        lambda r: determine_status_and_assigned(r),
         axis=1,
         result_type='expand'
     )
     logging.info("Status and Assigned results determined for PMD Dump records.")
 
-    # Remove ignored rows (where Status_Output is None)
-    final_output_df = df_pmd_dump[df_pmd_dump['Status_Output'].notna()].copy()
-
-    # Rename the output status/assigned columns to their desired final names
-    final_output_df['Status'] = final_output_df['Status_Output']
-    final_output_df['Assigned'] = final_output_df['Assigned_Output']
+    # Remove ignored rows (where Status is None)
+    final_output_df = df_pmd_dump[df_pmd_dump['status'].notna()].copy()
 
     # --- Prepare final output DataFrame ---
 
-    # Get all cleaned columns from the original PMD Dump that we want to keep
-    # This will ensure we preserve the structure of the input dump file
-    dump_columns_to_keep = [col for col in df_pmd_dump.columns if col not in ['valid_from_key', 'supplier_name_key', 'comp_key', 'Status_Output', 'Assigned_Output']]
+    # Map the cleaned columns back to their original names where appropriate
+    # and add the new Status/Assigned columns.
+    final_output_columns_order_map = [
+        original_to_cleaned_dump['Valid From'], # Use cleaned name internally, will be mapped back
+        'bukr', 'type', 'ebsno',
+        original_to_cleaned_dump['Supplier Name'], # Use cleaned name internally, will be mapped back
+        'street', 'city', 'country', 'zip_code', 'requested_by', 'pur_approver', 'pur_release_date',
+        'status', 'assigned' # These are the new columns, already cleaned
+    ]
 
-    # Select these columns from the final_output_df
-    final_output_df = final_output_df[dump_columns_to_keep + ['Status', 'Assigned']]
+    # Filter to only include columns that exist in the final_output_df
+    final_output_df_cols_filtered = [col for col in final_output_columns_order_map if col in final_output_df.columns]
+    final_output_df = final_output_df[final_output_df_cols_filtered]
 
-    # Now, rename the cleaned columns back to their original names from df_pmd_dump_original
-    # but only for the columns that were in the original dump.
-    # The 'Status' and 'Assigned' columns are already correctly capitalized.
+    # Rename columns back to their original names for the final output
+    cleaned_to_original_dump_output = {v: k for k, v in original_to_cleaned_dump.items()}
+    
+    # Exclude 'status' and 'assigned' from renaming as they are new columns
+    # and already in the desired output format (lowercase in df_pmd_dump, will be renamed to proper case for output)
+    columns_to_rename_final = {
+        cleaned_col: original_name 
+        for cleaned_col, original_name in cleaned_to_original_dump_output.items() 
+        if cleaned_col in final_output_df.columns and cleaned_col not in ['status', 'assigned']
+    }
+    final_output_df.rename(columns=columns_to_rename_final, inplace=True)
 
-    # Create a mapping from cleaned column names to original column names
-    cleaned_to_original_map = {clean_column_names(pd.DataFrame(columns=[col])).columns[0]: col for col in df_pmd_dump_original.columns}
+    # Rename the new 'status' and 'assigned' columns to their proper casing for output
+    final_output_df.rename(columns={'status': 'Status', 'assigned': 'Assigned'}, inplace=True)
 
-    # Apply this mapping, excluding 'Status' and 'Assigned' which we named explicitly
-    columns_to_rename_back = {cleaned_col: original_col for cleaned_col, original_col in cleaned_to_original_map.items() if cleaned_col in final_output_df.columns and cleaned_col not in ['status', 'assigned']}
-    final_output_df.rename(columns=columns_to_rename_back, inplace=True)
 
-    # Reorder columns to match the original dump file's order, followed by 'Status' and 'Assigned'
-    final_column_order = [col for col in df_pmd_dump_original.columns if col in final_output_df.columns]
-    if 'Status' not in final_column_order:
-        final_column_order.append('Status')
-    if 'Assigned' not in final_column_order:
-        final_column_order.append('Assigned')
+    # --- Final date formatting and string handling ---
+    # Use the original 'Valid From' column name as it is now restored
+    if original_to_cleaned_dump['Valid From'] in final_output_df.columns:
+        final_output_df[original_to_cleaned_dump['Valid From']] = final_output_df['valid_from_dt'].dt.strftime('%Y-%m-%d %I:%M %p')
 
-    final_output_df = final_output_df[final_column_order]
-
-    # Format 'Valid From' back to MM/DD/YYYY if it's a date column
-    # Use the actual original column name for 'Valid From'
-    original_valid_from_col_name = None
-    for original_col in df_pmd_dump_original.columns:
-        if clean_column_names(pd.DataFrame(columns=[original_col])).columns[0] == 'valid_from':
-            original_valid_from_col_name = original_col
-            break
-
-    if original_valid_from_col_name and original_valid_from_col_name in final_output_df.columns:
-        final_output_df[original_valid_from_col_name] = format_date_to_mdyyyy(final_output_df[original_valid_from_col_name])
+    # Drop temporary datetime column
+    final_output_df.drop(columns=['valid_from_dt', 'comp_key'], errors='ignore', inplace=True)
 
     # Ensure all string columns that are meant to be empty strings are not 'None' or 'nan'
     for col in final_output_df.columns:
         if final_output_df[col].dtype == 'object':
             final_output_df[col] = final_output_df[col].fillna('')
+
+    # Reorder columns to the desired final output order, ensuring all exist
+    final_output_cols_desired = [
+        'Valid From', 'Bukr.', 'Type', 'EBSNO', 'Supplier Name', 'Street',
+        'City', 'Country', 'Zip Code', 'Requested By', 'Pur. approver',
+        'Pur. release date', 'Status', 'Assigned'
+    ]
+    # Filter final_output_cols_desired to only include columns that are actually present
+    final_output_df = final_output_df[[col for col in final_output_cols_desired if col in final_output_df.columns]]
 
 
     today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
