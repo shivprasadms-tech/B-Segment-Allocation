@@ -16,9 +16,11 @@ warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-template_dir = os.path.join(BASE_DIR, 'templates') # Corrected path
-static_dir = os.path.join(BASE_DIR, 'static')     # Corrected path
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # This would be 'your-vercel-project/api'
+template_dir = os.path.join(BASE_DIR, '..', 'templates') # This would point to 'your-vercel-project/templates'
+static_dir = os.path.join(BASE_DIR, '..', 'static')     # This would point to 'your-vercel-project/static'
+
+app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
 # Pass static_folder to the Flask constructor
 app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
