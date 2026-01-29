@@ -592,7 +592,8 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     """Encapsulates the B-Segment Allocation logic."""
     logging.info("Starting B-Segment Allocation Process...")
 
-    REGION_MAPPING_FILE_PATH = os.path.join(BASE_DIR, 'company_code_region_mapping.xlsx')
+    PROJECT_ROOT = os.path.join(BASE_DIR, '..')
+    REGION_MAPPING_FILE_PATH = os.path.join(PROJECT_ROOT, 'company_code_region_mapping.xlsx')
 
     uploaded_files = {}
 
