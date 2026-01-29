@@ -35,7 +35,7 @@ CONSOLIDATED_OUTPUT_COLUMNS = [
 ALLOWED_EXTENSIONS = {'xls', 'xlsx'}
 
 # --- Helper Functions ---
-
+# (These should generally be at the top after imports and app config)
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -67,6 +67,10 @@ def clean_column_names(df):
         new_columns.append(col)
     df.columns = new_columns
     return df
+
+
+# --- B-Segment Allocation Processing Functions ---
+# (These should all come BEFORE any routes that might call them)
 
 def consolidate_data_process(df_pisa, df_esm, df_pm7):
     """
@@ -632,7 +636,7 @@ def process_central_file_step3_final_merge_and_needs_review(
     return True, "Central file processing (Step 3) successful"
 
 
-# --- B-Segment Allocation Processing Function (now main processing function) ---
+# --- B-Segment Allocation Processing Function ---
 def process_b_segment_allocation_core(request_files, temp_dir):
     """Encapsulates the B-Segment Allocation logic."""
     logging.info("Starting B-Segment Allocation Process...")
@@ -768,7 +772,232 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     return True, 'Processing complete', final_central_output_file_path
 
 
+# --- PMD Lookup Processing Function ---
+# (This should also come BEFORE any routes that might call it)
+def process_pmd_lookup_core(request_files, temp_dir):
+    """
+    Encapsulates the PMD Lookup logic, modified to align with the provided second snippet.
+    This includes the 'New', 'Hold', and 'Ignore (Approved)' status determination.
+    Enhanced with debugging to identify "all New" status issue.
+    """
+    logging.info("Starting PMD Lookup Process (revised logic with debugging)...")
+
+    uploaded_files = {}
+
+    # Handle required PMD files
+    required_pmd_file_keys = ['pmd_central_file', 'pmd_lookup_file']
+    for key in required_pmd_file_keys:
+        file = request_files.get(key)
+        if not file or file.filename == '':
+            return False, f'Missing required PMD file: "{key}". Please upload both PMD files.', None
+        if allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(temp_dir, filename)
+            file.save(file_path)
+            uploaded_files[key] = file_path
+            flash(f'PMD file "{filename}" uploaded successfully.', 'info')
+        else:
+            return False, f'Invalid file type for PMD file "{key}". Please upload an .xlsx file.', None
+
+    pmd_central_file_path = uploaded_files['pmd_central_file']
+    pmd_lookup_file_path = uploaded_files['pmd_lookup_file']
+
+    try:
+        df_central_pmd_original = pd.read_excel(pmd_central_file_path, keep_default_na=False)
+        df_pmd_dump_original = pd.read_excel(pmd_lookup_file_path, keep_default_na=False)
+        logging.info("PMD Central and PMD Dump files loaded.")
+
+    except Exception as e:
+        logging.error(f"Error loading PMD files: {e}", exc_info=True)
+        return False, f"Error loading one or both PMD Excel files: {e}. Please ensure they are valid .xlsx formats.", None
+
+    # --- Validate essential columns for PMD Lookup (on original DFs) ---
+    central_required = ['Valid From', 'Supplier Name', 'Status', 'Assigned']
+    pmd_required = ['Valid From', 'Supplier Name']
+
+    for col in central_required:
+        if col not in df_central_pmd_original.columns:
+            return False, f"Missing required column '{col}' in PMD Central file. Please check rules.", None
+
+    for col in pmd_required:
+        if col not in df_pmd_dump_original.columns:
+            return False, f"Missing required column '{col}' in PMD Lookup Data file. Please check rules.", None
+    logging.info("Required columns validated in original DataFrames.")
+
+
+    # --- Create copies for processing and clean column names for internal use ---
+    df_central_pmd = df_central_pmd_original.copy()
+    df_pmd_dump = df_pmd_dump_original.copy()
+
+    # Map original names to cleaned names for consistent internal referencing
+    original_to_cleaned_central = {col: clean_column_names(pd.DataFrame(columns=[col])).columns[0] for col in df_central_pmd.columns}
+    original_to_cleaned_dump = {col: clean_column_names(pd.DataFrame(columns=[col])).columns[0] for col in df_pmd_dump.columns}
+    
+    df_central_pmd.rename(columns=original_to_cleaned_central, inplace=True)
+    df_pmd_dump.rename(columns=original_to_cleaned_dump, inplace=True)
+    logging.debug(f"Cleaned Central PMD columns: {df_central_pmd.columns.tolist()}")
+    logging.debug(f"Cleaned PMD Dump columns: {df_pmd_dump.columns.tolist()}")
+
+    # --- Pre-processing for lookup keys ---
+    # Use the cleaned column names for internal operations
+    cleaned_valid_from_central = original_to_cleaned_central['Valid From']
+    cleaned_supplier_name_central = original_to_cleaned_central['Supplier Name']
+    cleaned_status_central = original_to_cleaned_central['Status']
+    cleaned_assigned_central = original_to_cleaned_central['Assigned']
+
+    cleaned_valid_from_dump = original_to_cleaned_dump['Valid From']
+    cleaned_supplier_name_dump = original_to_cleaned_dump['Supplier Name']
+
+    # Standardize 'Valid From' dates to a comparable format (YYYY-MM-DD string)
+    # pd.to_datetime needs to handle various input formats gracefully
+    df_central_pmd['valid_from_dt'] = pd.to_datetime(df_central_pmd[cleaned_valid_from_central], errors='coerce')
+    df_pmd_dump['valid_from_dt'] = pd.to_datetime(df_pmd_dump[cleaned_valid_from_dump], errors='coerce')
+
+    # Drop rows where essential lookup components are missing after date conversion
+    df_central_pmd.dropna(subset=['valid_from_dt', cleaned_supplier_name_central], inplace=True)
+    df_pmd_dump.dropna(subset=['valid_from_dt', cleaned_supplier_name_dump], inplace=True)
+    logging.info(f"After date conversion and NaN drop: Central PMD rows: {len(df_central_pmd)}, PMD Dump rows: {len(df_pmd_dump)}")
+
+    # Create composite key for both dataframes, ensuring consistency
+    df_central_pmd['comp_key'] = (
+        df_central_pmd['valid_from_dt'].dt.strftime('%Y-%m-%d') + '__' +
+        df_central_pmd[cleaned_supplier_name_central].astype(str).str.strip().str.lower()
+    )
+    df_pmd_dump['comp_key'] = (
+        df_pmd_dump['valid_from_dt'].dt.strftime('%Y-%m-%d') + '__' +
+        df_pmd_dump[cleaned_supplier_name_dump].astype(str).str.strip().str.lower()
+    )
+    logging.info("Composite keys created for both DataFrames.")
+
+    # --- Central Lookup (no join, use set_index for efficiency) ---
+    # Select only the relevant columns for lookup from central and set comp_key as index
+    # Ensure status and assigned columns are handled as strings for reliable comparison/retrieval
+    central_lookup_data = df_central_pmd[[
+        'comp_key',
+        cleaned_status_central,
+        cleaned_assigned_central
+    ]].copy()
+
+    # Convert status and assigned to string types to prevent errors during lookup
+    central_lookup_data[cleaned_status_central] = central_lookup_data[cleaned_status_central].astype(str).str.strip()
+    central_lookup_data[cleaned_assigned_central] = central_lookup_data[cleaned_assigned_central].astype(str).str.strip()
+
+    central_lookup = central_lookup_data.set_index('comp_key')[[cleaned_status_central, cleaned_assigned_central]]
+    central_lookup.columns = ['_status_central', '_assigned_central'] # Rename to avoid conflict
+    
+    logging.debug(f"Central lookup table created with {len(central_lookup)} unique keys.")
+    if logging.getLogger().level == logging.DEBUG:
+        logging.debug(f"Sample Central Lookup Keys (first 5): {central_lookup.index.head().tolist()}")
+        logging.debug(f"Sample Central Lookup Data (first 5):\n{central_lookup.head()}")
+
+
+    # --- Apply the provided logic to determine Status and Assigned ---
+    def determine_status_and_assigned(row):
+        dump_comp_key = row['comp_key']
+
+        # No match → New
+        if dump_comp_key not in central_lookup.index:
+            logging.debug(f"Key '{dump_comp_key}' not found in central lookup. Status: New")
+            return 'New', None
+        
+        # Match found in central_lookup
+        central_record = central_lookup.loc[dump_comp_key]
+        central_status = str(central_record['_status_central']).strip().lower()
+        central_assigned = central_record['_assigned_central']
+
+        logging.debug(f"Key '{dump_comp_key}' found. Central Status: '{central_status}', Assigned: '{central_assigned}'")
+
+        # Match + Approved → Ignore (return None for both status and assigned)
+        if central_status == 'approved':
+            logging.debug(f"Central status is 'approved'. Ignoring row.")
+            return None, None # Signifies row to be ignored
+
+        # Match + Not Approved → Hold
+        logging.debug(f"Central status is not 'approved'. Status: Hold.")
+        return 'Hold', central_assigned
+
+    # Apply the status determination
+    df_pmd_dump[['status_output', 'assigned_output']] = df_pmd_dump.apply(
+        lambda r: determine_status_and_assigned(r),
+        axis=1,
+        result_type='expand'
+    )
+    logging.info("Status and Assigned results determined for PMD Dump records.")
+
+    # Log distribution of generated statuses before filtering
+    logging.debug(f"Generated PMD Dump Statuses before filtering (counts):\n{df_pmd_dump['status_output'].value_counts(dropna=False)}")
+
+    # Remove ignored rows (where status_output is None)
+    final_output_df = df_pmd_dump[df_pmd_dump['status_output'].notna()].copy()
+    logging.info(f"Filtered to {len(final_output_df)} records (ignoring 'Approved' matches).")
+
+    # --- Prepare final output DataFrame ---
+
+    # Get the original column names for the output
+    # First, list all columns from the original pmd_dump_original, plus the new Status and Assigned
+    all_original_dump_cols = df_pmd_dump_original.columns.tolist()
+    
+    # These are the columns we want in the final output, in this specific order
+    final_output_cols_desired_display = [
+        'Valid From', 'Bukr.', 'Type', 'EBSNO', 'Supplier Name', 'Street',
+        'City', 'Country', 'Zip Code', 'Requested By', 'Pur. approver',
+        'Pur. release date', 'Status', 'Assigned'
+    ]
+
+    # Create a mapping from cleaned column names (used in final_output_df) to their original display names
+    cleaned_to_original_dump_map = {
+        clean_column_names(pd.DataFrame(columns=[original_col])).columns[0]: original_col
+        for original_col in df_pmd_dump_original.columns
+    }
+    # Add new 'status_output' and 'assigned_output' to map
+    cleaned_to_original_dump_map['status_output'] = 'Status'
+    cleaned_to_original_dump_map['assigned_output'] = 'Assigned'
+
+    # Select and rename columns for the final output DataFrame
+    # Start with all columns from final_output_df, then rename
+    final_cols_for_rename = {}
+    for col in final_output_df.columns:
+        if col in cleaned_to_original_dump_map:
+            final_cols_for_rename[col] = cleaned_to_original_dump_map[col]
+    
+    final_output_df.rename(columns=final_cols_for_rename, inplace=True)
+
+    # Ensure 'Valid From' is formatted as MM/DD/YYYY HH:MM AM/PM
+    # Using the 'valid_from_dt' (datetime object) that we created for consistency
+    if 'valid_from_dt' in final_output_df.columns and 'Valid From' in final_output_df.columns:
+        final_output_df['Valid From'] = final_output_df['valid_from_dt'].dt.strftime('%Y-%m-%d %I:%M %p')
+    
+    # Drop temporary columns used for processing
+    final_output_df.drop(columns=['valid_from_dt', 'comp_key'], errors='ignore', inplace=True)
+
+    # Reorder columns to match the desired display order and filter out any non-existent columns
+    final_output_df = final_output_df[[col for col in final_output_cols_desired_display if col in final_output_df.columns]]
+    
+    # Ensure all string columns that are meant to be empty strings are not 'nan' or 'None'
+    for col in final_output_df.columns:
+        if final_output_df[col].dtype == 'object':
+            final_output_df[col] = final_output_df[col].fillna('')
+    
+    logging.info("Final output DataFrame prepared and formatted.")
+
+
+    today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
+    pmd_output_filename = f'PMD_Lookup_Result_{today_str}.xlsx'
+    pmd_output_file_path = os.path.join(temp_dir, pmd_output_filename)
+
+    try:
+        final_output_df.to_excel(pmd_output_file_path, index=False)
+        logging.info(f"PMD Lookup result saved to: {pmd_output_file_path}")
+    except Exception as e:
+        logging.error(f"Error saving PMD Lookup result file: {e}", exc_info=True)
+        return False, f"Error saving PMD Lookup result file: {e}", None
+
+    logging.info("--- PMD Lookup Process Complete ---")
+    return True, 'PMD Lookup processing successful', pmd_output_file_path
+
+
 # --- Flask Routes ---
+# (These should be defined AFTER all functions they call)
 
 @app.route('/', methods=['GET'])
 def index():
@@ -827,7 +1056,8 @@ def route_process_pmd_lookup():
         session.pop('pmd_lookup_output_path', None)
         # We don't clear b_segment related paths here as it's a separate process
 
-        success, message, output_path = process_pmd_lookup_core(request.files, temp_dir)
+        # This is where the NameError occurred previously
+        success, message, output_path = process_pmd_lookup_core(request.files, temp_dir) 
 
         if not success:
             flash(message, 'error')
