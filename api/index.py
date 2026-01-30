@@ -118,7 +118,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
                 'Re-Open Date': None,
                 'Allocation Date': today_date_formatted,
                 'Requester': None, 'Clarification Date': None, 'Aging': None, 'Remarks': None,
-                'Region': None, 'Processor': None, 'Category': None
+                'Region': None, 'Processor': None, 'Category': str(row.get('category', ''))
             }
             all_consolidated_rows.append(new_row)
         logging.info(f"Collected {len(df_pisa_filtered)} rows from PISA.")
@@ -143,7 +143,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
                 'Vendor number': str(row.get('vendor_number', '')),
                 'Allocation Date': today_date_formatted,
                 'Clarification Date': None, 'Aging': None,
-                'Region': None, 'Processor': None, 'Category': None
+                'Region': None, 'Processor': None, 'Category': str(row.get('category', ''))
             }
             all_consolidated_rows.append(new_row)
         logging.info(f"Collected {len(df_esm)} rows from ESM.")
@@ -167,7 +167,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
                 'Re-Open Date': None,
                 'Allocation Date': today_date_formatted, 'Completion Date': None, 'Requester': None,
                 'Clarification Date': None, 'Aging': None,
-                'Region': None, 'Processor': None, 'Category': None
+                'Region': None, 'Processor': None, 'Category': str(row.get('category', ''))
             }
             all_consolidated_rows.append(new_row)
         logging.info(f"Collected {len(df_pm7)} rows from PM7.")
