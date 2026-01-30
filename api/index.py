@@ -31,12 +31,20 @@ CONSOLIDATED_OUTPUT_COLUMNS = [
     'Remarks', 'Aging', 'Today'
 ]
 
-# Define expected output columns for PMD Lookup
-PMD_OUTPUT_COLUMNS = [
+# Define expected output columns for PMD Lookup - Sheet 1
+PMD_OUTPUT_SHEET1_COLUMNS = [
     'Valid From', 'Bukr.', 'Type', 'EBSNO', 'Supplier Name', 'Street', 'City',
     'Country', 'Zip Code', 'Requested By', 'Pur. approver', 'Pur. release date',
     'Status', 'Assigned'
 ]
+
+# Define expected output columns for PMD Lookup - Sheet 2 (Mapped Format)
+PMD_OUTPUT_SHEET2_COLUMNS = [
+    'Company code', 'Region', 'Vendor number', 'Vendor Name', 'Status', 'Received Date',
+    'Re-Open Date', 'Allocation Date', 'Clarification Date', 'Completion Date',
+    'Requester', 'Remarks', 'Aging', 'Today', 'Category', 'Assigned'
+]
+
 
 ALLOWED_EXTENSIONS = {'xls', 'xlsx'}
 
@@ -118,7 +126,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
                 'Re-Open Date': None,
                 'Allocation Date': today_date_formatted,
                 'Requester': None, 'Clarification Date': None, 'Aging': None, 'Remarks': None,
-                'Region': None, 'Processor': None, 'Category': str(row.get('category', ''))
+                'Region': None, 'Processor': None, 'Category': None
             }
             all_consolidated_rows.append(new_row)
         logging.info(f"Collected {len(df_pisa_filtered)} rows from PISA.")
@@ -139,11 +147,11 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
                 'Today': today_date_formatted,
                 'Remarks': str(row.get('short_description', '')), # Defensive str conversion
                 'Channel': 'ESM',
-                'Company code': str(row.get('company_code', '')) ,'Vendor Name': str(row.get('vendor_name', '')), # Keep None, will be filled if needed later
-                'Vendor number': str(row.get('vendor_number', '')),
+                'Company code': None,'Vendor Name': None, # Keep None, will be filled if needed later
+                'Vendor number': None,
                 'Allocation Date': today_date_formatted,
                 'Clarification Date': None, 'Aging': None,
-                'Region': None, 'Processor': None, 'Category': str(row.get('category', ''))
+                'Region': None, 'Processor': None, 'Category': None
             }
             all_consolidated_rows.append(new_row)
         logging.info(f"Collected {len(df_esm)} rows from ESM.")
@@ -167,7 +175,7 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
                 'Re-Open Date': None,
                 'Allocation Date': today_date_formatted, 'Completion Date': None, 'Requester': None,
                 'Clarification Date': None, 'Aging': None,
-                'Region': None, 'Processor': None, 'Category': str(row.get('category', ''))
+                'Region': None, 'Processor': None, 'Category': None
             }
             all_consolidated_rows.append(new_row)
         logging.info(f"Collected {len(df_pm7)} rows from PM7.")
@@ -211,9 +219,7 @@ def process_central_file_step2_update_existing(consolidated_df_pisa_esm_pm7, cen
         df_central_cleaned = clean_column_names(df_central.copy())
 
         # Ensure Barcode in central file is string and replace 'nan'
-        if 'barcode' in df_central_cleaned.columns:
-            df_central_cleaned['barcode'] = df_central_cleaned['barcode'].astype(str).replace('nan', '')
-        else:
+        if 'barcode' not in df_central_cleaned.columns:
             return False, "Error: 'barcode' column not found in the central file after cleaning. Cannot update status (Step 2)."
 
         # Ensure 'status' column exists for subsequent logic
@@ -549,7 +555,7 @@ def process_central_file_step3_final_merge_and_needs_review(
 
                 new_mapped_regions = df_final_central['Company code_lookup'].map(region_map)
 
-                if 'Region' not in df_final_central.columns:
+                if 'Region' not in df_final_columns:
                     df_final_central['Region'] = ''
 
                 # Fill NaN (or originally empty string, now pd.NA from fillna) in 'Region' with new_mapped_regions
@@ -767,7 +773,7 @@ def process_b_segment_allocation_core(request_files, temp_dir):
 
 
 def process_pmd_lookup_core(request_files, temp_dir):
-    """Encapsulates the PMD Lookup logic."""
+    """Encapsulates the PMD Lookup logic, now generating a multi-sheet output."""
     logging.info("Starting PMD Lookup Process...")
 
     uploaded_files = {}
@@ -792,7 +798,6 @@ def process_pmd_lookup_core(request_files, temp_dir):
 
     try:
         # Load and clean PMD Central File
-        # Use keep_default_na=False to prevent empty strings from being read as NaN
         df_central_pmd_original = pd.read_excel(pmd_central_file_path, keep_default_na=False)
         df_central_pmd = clean_column_names(df_central_pmd_original.copy())
 
@@ -862,72 +867,105 @@ def process_pmd_lookup_core(request_files, temp_dir):
     df_pmd_dump['comp_key'] = df_pmd_dump['valid_from_key'] + '__' + df_pmd_dump['supplier_name_key']
 
     # --- Core Lookup Logic ---
-    final_pmd_records = [] # Will hold records from PMD Dump that are 'New' or 'Hold'
+    final_pmd_records_sheet1 = [] # Will hold records for Sheet 1
 
     for index, row in df_pmd_dump.iterrows():
         dump_comp_key = row['comp_key']
 
+        new_record_s1 = {k: v for k, v in row.drop(['comp_key', 'valid_from_key', 'supplier_name_key']).items()}
+        
         if dump_comp_key in central_hold_lookup.index:
             # Match found in `central_hold_lookup`, so its status is 'Hold'
             central_record = central_hold_lookup.loc[dump_comp_key]
             
-            new_record = {k: v for k, v in row.drop(['comp_key', 'valid_from_key', 'supplier_name_key']).items()}
-            new_record['Status'] = 'Hold'
-            new_record['Assigned'] = str(central_record['assigned']).strip() # Get assigned from central 'Hold' record
-            final_pmd_records.append(new_record)
+            new_record_s1['Status'] = 'Hold'
+            new_record_s1['Assigned'] = str(central_record['assigned']).strip() # Get assigned from central 'Hold' record
+            final_pmd_records_sheet1.append(new_record_s1)
             logging.debug(f"PMD Dump record {dump_comp_key} set to 'Hold' (matched central 'Hold' record).")
         else:
-            # No match found in central_hold_lookup. This means either:
-            # 1. It's a truly new record (not in central at all).
-            # 2. It matched a central record with a status other than 'Hold' (e.g., 'Approved', 'New').
-            # According to the clarified logic: "if there is no match then make the status as new"
-            # This implies if it doesn't match an *already 'Hold'* record in central, it's 'New'.
-
-            new_record = {k: v for k, v in row.drop(['comp_key', 'valid_from_key', 'supplier_name_key']).items()}
-            new_record['Status'] = 'New'
-            new_record['Assigned'] = '' # No assigned for 'New' records
-            final_pmd_records.append(new_record)
+            # No match found in central_hold_lookup. This means if it doesn't match an *already 'Hold'* record in central, it's 'New'.
+            new_record_s1['Status'] = 'New'
+            new_record_s1['Assigned'] = '' # No assigned for 'New' records
+            final_pmd_records_sheet1.append(new_record_s1)
             logging.debug(f"PMD Dump record {dump_comp_key} set to 'New' (no match in central 'Hold' records).")
 
-    df_output = pd.DataFrame(final_pmd_records) # This df now contains all 'New' and 'Hold' records derived from PMD Dump.
-
-    # --- Final formatting and column reordering for output ---
-    if not df_output.empty:
-        # Map cleaned dump column names back to original for the PMD_OUTPUT_COLUMNS
-        # Create a mapping from cleaned column names to desired output column names
-        cleaned_to_output_map = {clean_column_names(pd.DataFrame(columns=[col])).columns[0]: col for col in PMD_OUTPUT_COLUMNS}
+    df_sheet1_output = pd.DataFrame(final_pmd_records_sheet1)
+    
+    # --- Final formatting and column reordering for Sheet 1 output ---
+    if not df_sheet1_output.empty:
+        # Map cleaned dump column names back to original for the PMD_OUTPUT_SHEET1_COLUMNS
+        cleaned_to_output_map_s1 = {clean_column_names(pd.DataFrame(columns=[col])).columns[0]: col for col in PMD_OUTPUT_SHEET1_COLUMNS}
         
-        # Rename columns in df_output using this map
-        # Only rename columns that actually exist in df_output AND have a mapping
-        cols_to_rename_back = {cleaned_col: original_output_col for cleaned_col, original_output_col in cleaned_to_output_map.items() if cleaned_col in df_output.columns and original_output_col not in ['Status', 'Assigned']}
-        df_output.rename(columns=cols_to_rename_back, inplace=True)
+        cols_to_rename_back_s1 = {cleaned_col: original_output_col for cleaned_col, original_output_col in cleaned_to_output_map_s1.items() if cleaned_col in df_sheet1_output.columns and original_output_col not in ['Status', 'Assigned']}
+        df_sheet1_output.rename(columns=cols_to_rename_back_s1, inplace=True)
 
         # Ensure 'Valid From' is formatted to MM/DD/YYYY
-        if 'Valid From' in df_output.columns:
-            df_output['Valid From'] = format_date_to_mdyyyy(df_output['Valid From'])
+        if 'Valid From' in df_sheet1_output.columns:
+            df_sheet1_output['Valid From'] = format_date_to_mdyyyy(df_sheet1_output['Valid From'])
         
         # Add any missing output columns and reorder
-        for col in PMD_OUTPUT_COLUMNS:
-            if col not in df_output.columns:
-                df_output[col] = '' # Add missing columns as empty string
+        for col in PMD_OUTPUT_SHEET1_COLUMNS:
+            if col not in df_sheet1_output.columns:
+                df_sheet1_output[col] = '' # Add missing columns as empty string
             
             # Ensure all object columns are handled (fillna with empty string)
-            if df_output[col].dtype == 'object':
-                df_output[col] = df_output[col].fillna('')
+            if df_sheet1_output[col].dtype == 'object':
+                df_sheet1_output[col] = df_sheet1_output[col].fillna('')
 
         # Final reorder of columns
-        df_output = df_output[PMD_OUTPUT_COLUMNS]
+        df_sheet1_output = df_sheet1_output[PMD_OUTPUT_SHEET1_COLUMNS]
     else:
-        # If df_output is empty, ensure it still has the correct columns for an empty output file
-        df_output = pd.DataFrame(columns=PMD_OUTPUT_COLUMNS)
+        df_sheet1_output = pd.DataFrame(columns=PMD_OUTPUT_SHEET1_COLUMNS) # Ensure an empty DF with correct columns
 
+    # --- Generate Sheet 2: Mapped Format ---
+    df_sheet2_output = df_sheet1_output.copy() # Start with the data from Sheet 1
+
+    # Define the mapping from Sheet 1 columns to Sheet 2 columns
+    column_mapping_s1_to_s2 = {
+        'Bukr.': 'Company code',
+        'Country': 'Region',
+        'EBSNO': 'Vendor number',
+        'Supplier Name': 'Vendor Name',
+        'Status': 'Status',
+        'Valid From': 'Received Date',
+        'Requested By': 'Requester',
+        'Type': 'Category', # New mapping
+        'Assigned': 'Assigned' # Direct mapping
+    }
+
+    # Rename columns based on the mapping
+    df_sheet2_output.rename(columns=column_mapping_s1_to_s2, inplace=True)
+
+    # Add/set static/blank columns for Sheet 2
+    df_sheet2_output['Re-Open Date'] = ''
+    df_sheet2_output['Allocation Date'] = ''
+    df_sheet2_output['Clarification Date'] = ''
+    df_sheet2_output['Completion Date'] = ''
+    df_sheet2_output['Remarks'] = ''
+    df_sheet2_output['Aging'] = ''
+    df_sheet2_output['Today'] = datetime.now().strftime("%m/%d/%Y") # Today's date
+
+    # Ensure all Sheet 2 output columns are present and in the correct order
+    for col in PMD_OUTPUT_SHEET2_COLUMNS:
+        if col not in df_sheet2_output.columns:
+            df_sheet2_output[col] = '' # Add missing columns
+        
+        if df_sheet2_output[col].dtype == 'object':
+            df_sheet2_output[col] = df_sheet2_output[col].fillna('')
+
+    df_sheet2_output = df_sheet2_output[PMD_OUTPUT_SHEET2_COLUMNS]
+
+
+    # --- Write both DataFrames to a multi-sheet Excel file ---
     today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
     pmd_output_filename = f'PMD_Lookup_Result_{today_str}.xlsx'
     pmd_output_file_path = os.path.join(temp_dir, pmd_output_filename)
 
     try:
-        df_output.to_excel(pmd_output_file_path, index=False)
-        logging.info(f"PMD Lookup result saved to: {pmd_output_file_path}")
+        with pd.ExcelWriter(pmd_output_file_path, engine='xlsxwriter') as writer:
+            df_sheet1_output.to_excel(writer, sheet_name='PMD Lookup Result', index=False)
+            df_sheet2_output.to_excel(writer, sheet_name='Mapped Format', index=False)
+        logging.info(f"PMD Lookup result (multi-sheet Excel) saved to: {pmd_output_file_path}")
     except Exception as e:
         return False, f"Error saving PMD Lookup result file: {e}", None
 
