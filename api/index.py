@@ -416,7 +416,7 @@ def process_central_file_step3_final_merge_and_needs_review(
     # --- 4. Directly map and append RGBA records ---
     logging.info("Attempting to process RGBA records for direct appending.")
     if df_rgba_original is None:
-        logging.warning("RGBA original DataFrame is None. Was the RGPA file uploaded and read successfully?")
+        logging.warning("RGBA original DataFrame is None. Skipping RGBA processing as it was not provided or failed to load.")
     elif df_rgba_original.empty:
         logging.info("RGBA original DataFrame is empty. Skipping RGBA processing.")
     else:
@@ -638,7 +638,7 @@ def process_central_file_step3_final_merge_and_needs_review(
 
 # --- B-Segment Allocation Processing Function (now main processing function) ---
 def process_b_segment_allocation_core(request_files, temp_dir):
-    # B-Segment Allocation code - UNCHANGED
+    # B-Segment Allocation code
     logging.info("Starting B-Segment Allocation Process...")
 
     # CORRECTED PATH FOR REGION MAPPING FILE
@@ -649,7 +649,7 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     uploaded_files = {}
 
     # --- Handle required files ---
-    required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'rgpa_file', 'b_segment_central_file']
+    required_file_keys = ['pisa_file', 'esm_file', 'pm7_file', 'b_segment_central_file'] # RGPA is now optional
     for key in required_file_keys:
         file = request_files.get(key)
         if not file or file.filename == '':
@@ -664,7 +664,7 @@ def process_b_segment_allocation_core(request_files, temp_dir):
             return False, f'Invalid file type for "{key}". Please upload an .xlsx file.', None
 
     # --- Handle optional files ---
-    optional_file_keys = ['workon_file', 'smd_file']
+    optional_file_keys = ['workon_file', 'rgpa_file', 'smd_file'] # Added 'rgpa_file' here
     for key in optional_file_keys:
         file = request_files.get(key)
         if file and file.filename != '':
@@ -685,29 +685,33 @@ def process_b_segment_allocation_core(request_files, temp_dir):
     esm_file_path = uploaded_files['esm_file']
     pm7_file_path = uploaded_files['pm7_file']
     workon_file_path = uploaded_files['workon_file'] # This will be path or None
-    rgba_file_path = uploaded_files['rgpa_file'] # !!! CORRECTED: Retrieve 'rgpa_file' from uploaded_files !!!
+    rgba_file_path = uploaded_files['rgpa_file'] # This will be path or None
     smd_file_path = uploaded_files['smd_file'] # This will be path or None
     initial_central_file_input_path = uploaded_files['b_segment_central_file']
 
     df_pisa_original = None
     df_esm_original = None
     df_pm7_original = None
-    df_workon_original = pd.DataFrame() # Initialize as empty DataFrame
-    df_rgba_original = None
-    df_smd_original = pd.DataFrame() # Initialize as empty DataFrame
+    df_workon_original = pd.DataFrame() # Initialize as empty DataFrame if not provided
+    df_rgba_original = pd.DataFrame() # Initialize as empty DataFrame if not provided
+    df_smd_original = pd.DataFrame() # Initialize as empty DataFrame if not provided
     df_region_mapping = pd.DataFrame()
 
     try:
         df_pisa_original = pd.read_excel(pisa_file_path)
         df_esm_original = pd.read_excel(esm_file_path)
         df_pm7_original = pd.read_excel(pm7_file_path)
-        df_rgba_original = pd.read_excel(rgba_file_path) # Uses the corrected rgba_file_path
 
         # Handle optional files: check if path exists before reading
         if workon_file_path and os.path.exists(workon_file_path):
             df_workon_original = pd.read_excel(workon_file_path)
         else:
             logging.info("Workon P71 file not loaded (not provided, invalid, or empty).")
+
+        if rgba_file_path and os.path.exists(rgba_file_path): # Check for RGBA file
+            df_rgba_original = pd.read_excel(rgba_file_path)
+        else:
+            logging.info("RGBA file not loaded (not provided, invalid, or empty).")
 
         if smd_file_path and os.path.exists(smd_file_path):
             df_smd_original = pd.read_excel(smd_file_path)
@@ -721,9 +725,17 @@ def process_b_segment_allocation_core(request_files, temp_dir):
             flash(f"Warning: Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty for records relying solely on this mapping.", 'warning')
             logging.warning(f"Region mapping file not found at {REGION_MAPPING_FILE_PATH}. Region column will be empty for records relying solely on this mapping.")
 
-
     except Exception as e:
-        return False, f"Error loading one or more input Excel files: {e}. Please ensure all files are valid .xlsx formats.", None
+        # Be more specific about which file might have caused the error
+        error_msg = f"Error loading one or more input Excel files: {e}. Please ensure all files are valid .xlsx formats."
+        if "pisa_file" in str(e).lower() and pisa_file_path: error_msg = f"Error loading PISA file: {e}"
+        elif "esm_file" in str(e).lower() and esm_file_path: error_msg = f"Error loading ESM file: {e}"
+        elif "pm7_file" in str(e).lower() and pm7_file_path: error_msg = f"Error loading PM7 file: {e}"
+        elif "workon_file" in str(e).lower() and workon_file_path: error_msg = f"Error loading Workon file: {e}"
+        elif "rgpa_file" in str(e).lower() and rgba_file_path: error_msg = f"Error loading RGBA file: {e}"
+        elif "smd_file" in str(e).lower() and smd_file_path: error_msg = f"Error loading SMD file: {e}"
+
+        return False, error_msg, None
 
     today_str = datetime.now().strftime("%d_%m_%Y_%H%M%S")
 
@@ -1011,6 +1023,8 @@ def route_process_b_segment_allocation():
 
         if not success:
             flash(message, 'error')
+            # It's good to log the error for debugging on the server side
+            logging.error(f"B-Segment processing failed: {message}")
             return redirect(url_for('index'))
 
         return render_template('index.html',
@@ -1038,6 +1052,7 @@ def route_process_pmd_lookup():
 
         if not success:
             flash(message, 'error')
+            logging.error(f"PMD Lookup processing failed: {message}")
             return redirect(url_for('index'))
 
         session['pmd_lookup_output_path'] = output_path # Store for download
@@ -1070,14 +1085,18 @@ def download_file(filename):
     b_segment_session_path = session.get('central_output_path')
     pmd_lookup_session_path = session.get('pmd_lookup_output_path')
 
-    if b_segment_session_path and os.path.basename(b_segment_session_path) == filename:
-        file_path_in_temp = os.path.join(temp_dir, filename)
-        logging.info(f"DEBUG: Matched B-Segment central file. Reconstructed path: {file_path_in_temp}")
-    elif pmd_lookup_session_path and os.path.basename(pmd_lookup_session_path) == filename:
-        file_path_in_temp = os.path.join(temp_dir, filename)
-        logging.info(f"DEBUG: Matched PMD Lookup result file. Reconstructed path: {file_path_in_temp}")
+    # Construct the full path to check against
+    # Ensure that we are only checking for filenames that match the *output* of the process
+    # and that the *path* matches the temp_dir assigned to the session.
+    # This prevents arbitrary file downloads.
+    if b_segment_session_path and os.path.basename(b_segment_session_path) == filename and os.path.dirname(b_segment_session_path) == temp_dir:
+        file_path_in_temp = b_segment_session_path
+        logging.info(f"DEBUG: Matched B-Segment central file. Actual path: {file_path_in_temp}")
+    elif pmd_lookup_session_path and os.path.basename(pmd_lookup_session_path) == filename and os.path.dirname(pmd_lookup_session_path) == temp_dir:
+        file_path_in_temp = pmd_lookup_session_path
+        logging.info(f"DEBUG: Matched PMD Lookup result file. Actual path: {file_path_in_temp}")
     else:
-        logging.error(f"DEBUG: Filename '{filename}' did not match any known session output files.")
+        logging.error(f"DEBUG: Filename '{filename}' did not match any known session output files within the assigned temp_dir.")
 
     if file_path_in_temp and os.path.exists(file_path_in_temp):
         logging.info(f"DEBUG: File '{file_path_in_temp}' exists. Attempting to send.")
