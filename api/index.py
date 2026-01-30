@@ -82,7 +82,7 @@ def clean_column_names(df):
     df.columns = new_columns
     return df
 
-# --- B-Segment Allocation Functions (No Changes) ---
+# --- B-Segment Allocation Functions (Fixed) ---
 
 def consolidate_data_process(df_pisa, df_esm, df_pm7):
     # B-Segment Allocation code - UNCHANGED
@@ -196,8 +196,8 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
     # Convert known date columns to datetime objects for consistency
     # This step is crucial for the Aging calculation later
     date_cols_to_process = ['Received Date', 'Re-Open Date', 'Allocation Date', 'Completion Date', 'Clarification Date', 'Today']
-    for col in date_cols_to_process:
-        if col in df_consolidated.columns:
+    for col in df_consolidated.columns: # Changed from date_cols_to_process to df_consolidated.columns to avoid key errors if a date col is missing
+        if col in date_cols_to_process: # Only process if it's one of the date columns we care about
             df_consolidated[col] = pd.to_datetime(df_consolidated[col], errors='coerce')
 
     # Convert Barcode, Company code, Vendor number to string *before* using in sets or merges
@@ -316,7 +316,7 @@ def process_central_file_step3_final_merge_and_needs_review(
     df_workon_original, df_rgba_original, df_smd_original, # Original DFs for direct mapping
     region_mapping_df
 ):
-    # B-Segment Allocation code - UNCHANGED
+    # B-Segment Allocation code - FIXED TYPO
     logging.info(f"\n--- Starting Central File Status Processing (Step 3: Final Merge & Needs Review) ---")
 
     today_date = datetime.now()
@@ -555,7 +555,7 @@ def process_central_file_step3_final_merge_and_needs_review(
 
                 new_mapped_regions = df_final_central['Company code_lookup'].map(region_map)
 
-                if 'Region' not in df_final_columns:
+                if 'Region' not in df_final_central.columns: # FIX: Changed df_final_columns to df_final_central.columns
                     df_final_central['Region'] = ''
 
                 # Fill NaN (or originally empty string, now pd.NA from fillna) in 'Region' with new_mapped_regions
@@ -894,6 +894,7 @@ def process_pmd_lookup_core(request_files, temp_dir):
     # --- Final formatting and column reordering for Sheet 1 output ---
     if not df_sheet1_output.empty:
         # Map cleaned dump column names back to original for the PMD_OUTPUT_SHEET1_COLUMNS
+        # Create a mapping from cleaned column names to desired output column names
         cleaned_to_output_map_s1 = {clean_column_names(pd.DataFrame(columns=[col])).columns[0]: col for col in PMD_OUTPUT_SHEET1_COLUMNS}
         
         cols_to_rename_back_s1 = {cleaned_col: original_output_col for cleaned_col, original_output_col in cleaned_to_output_map_s1.items() if cleaned_col in df_sheet1_output.columns and original_output_col not in ['Status', 'Assigned']}
@@ -937,13 +938,14 @@ def process_pmd_lookup_core(request_files, temp_dir):
     df_sheet2_output.rename(columns=column_mapping_s1_to_s2, inplace=True)
 
     # Add/set static/blank columns for Sheet 2
-    df_sheet2_output['Re-Open Date'] = ''
-    df_sheet2_output['Allocation Date'] = ''
-    df_sheet2_output['Clarification Date'] = ''
-    df_sheet2_output['Completion Date'] = ''
-    df_sheet2_output['Remarks'] = ''
-    df_sheet2_output['Aging'] = ''
-    df_sheet2_output['Today'] = datetime.now().strftime("%m/%d/%Y") # Today's date
+    # Ensure these are only added if not already created by renaming, or overwritten if they conflict
+    if 'Re-Open Date' not in df_sheet2_output.columns: df_sheet2_output['Re-Open Date'] = ''
+    if 'Allocation Date' not in df_sheet2_output.columns: df_sheet2_output['Allocation Date'] = ''
+    if 'Clarification Date' not in df_sheet2_output.columns: df_sheet2_output['Clarification Date'] = ''
+    if 'Completion Date' not in df_sheet2_output.columns: df_sheet2_output['Completion Date'] = ''
+    if 'Remarks' not in df_sheet2_output.columns: df_sheet2_output['Remarks'] = ''
+    if 'Aging' not in df_sheet2_output.columns: df_sheet2_output['Aging'] = ''
+    df_sheet2_output['Today'] = datetime.now().strftime("%m/%d/%Y") # Today's date always current
 
     # Ensure all Sheet 2 output columns are present and in the correct order
     for col in PMD_OUTPUT_SHEET2_COLUMNS:
