@@ -139,8 +139,8 @@ def consolidate_data_process(df_pisa, df_esm, df_pm7):
                 'Today': today_date_formatted,
                 'Remarks': str(row.get('short_description', '')), # Defensive str conversion
                 'Channel': 'ESM',
-                'Company code': None,'Vendor Name': None, # Keep None, will be filled if needed later
-                'Vendor number': None,
+                'Company code': str(row.get('company_code', '')) ,'Vendor Name': str(row.get('vendor_name', '')), # Keep None, will be filled if needed later
+                'Vendor number': str(row.get('vendor_number', '')),
                 'Allocation Date': today_date_formatted,
                 'Clarification Date': None, 'Aging': None,
                 'Region': None, 'Processor': None, 'Category': None
